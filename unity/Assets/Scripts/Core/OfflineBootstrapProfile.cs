@@ -1,5 +1,4 @@
 using System;
-using UnityEngine;
 
 namespace MMORPG.Core
 {
@@ -9,7 +8,7 @@ namespace MMORPG.Core
         public int nation = 2;
         public string internalAccountId = "offline-mobile";
         public int characterSlot;
-        public int initialZoneId = 1;
+        public int initialZoneId = 2;
 
         public void Validate()
         {
@@ -17,8 +16,11 @@ namespace MMORPG.Core
                 nation = 2;
             if (characterSlot < 0 || characterSlot > 2)
                 characterSlot = 0;
-            if (initialZoneId <= 0)
-                initialZoneId = 1;
+
+            // Original KO zone ids: Karus=1, El Morad=2.
+            if (initialZoneId <= 0 || (initialZoneId <= 2 && initialZoneId != nation))
+                initialZoneId = nation;
+
             if (string.IsNullOrWhiteSpace(internalAccountId))
                 internalAccountId = "offline-mobile";
         }
