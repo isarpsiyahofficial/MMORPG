@@ -2,7 +2,7 @@
 """Inventory the complete KO 1.298 client asset tree.
 
 The migration is not allowed to silently skip files. Every source file is hashed,
-classified and assigned a conversion strategy. Unknown extensions fail the audit.
+classified and assigned a conversion or platform-exclusion strategy.
 """
 from __future__ import annotations
 
@@ -16,18 +16,24 @@ import sys
 MODEL_EXTS = {
     ".n3chr", ".n3cpart", ".n3cplug", ".n3joint", ".n3anim", ".n3pmesh", ".n3shape",
     ".n3scene", ".n3camera", ".n3light", ".n3transform", ".n3vm", ".n3skin",
+    ".n3cskin", ".n3cskins", ".n3mesh", ".n3vmesh", ".n3fxplug",
 }
 TEXTURE_EXTS = {".dxt", ".tga", ".bmp", ".jpg", ".jpeg", ".png"}
+TERRAIN_TEXTURE_EXTS = {".gtt"}
 AUDIO_EXTS = {".wav", ".mp3", ".ogg"}
 TABLE_EXTS = {".tbl"}
 UI_EXTS = {".uif"}
 ZONE_EXTS = {
-    ".ens", ".gev", ".glo", ".gmd", ".gtd", ".opd", ".opdsub", ".tct", ".tlt",
-    ".flag", ".evt", ".map", ".path", ".wall", ".warp", ".regen", ".river", ".pond",
+    ".ens", ".gev", ".glo", ".gmd", ".gtd", ".opd", ".opdsub", ".opdext", ".tct", ".tlt",
+    ".flag", ".evt", ".evtsub", ".map", ".path", ".wall", ".warp", ".regen", ".river", ".pond",
+    ".gfo",
 }
 FX_EXTS = {".n3fx", ".fx", ".fxb", ".fxp"}
 TEXT_EXTS = {".ini", ".txt", ".md", ".csv", ".log"}
 BINARY_DATA_EXTS = {".dat", ".bin"}
+AMBIENT_TEXT_EXTS = {".brd", ".lst"}
+WORLD_ENV_EXTS = {".n3sky", ".grs", ".gea", ".mcn"}
+WINDOWS_MIDDLEWARE_EXTS = {".dll", ".asi", ".m3d", ".flt"}
 
 KNOWN_TOP_LEVEL = {
     "Chr", "ChrSelect", "DTex", "Data", "Intro", "Item", "Misc", "Object", "Snd",
@@ -46,6 +52,7 @@ def sha256(path: Path) -> str:
 def classify(relative: Path) -> tuple[str, str]:
     suffix = relative.suffix.lower()
     top = relative.parts[0] if relative.parts else ""
+    normalized = relative.as_posix().lower()
 
     if suffix in TABLE_EXTS:
         return "game-data", "tbl-to-canonical"
@@ -53,6 +60,8 @@ def classify(relative: Path) -> tuple[str, str]:
         return "ui-layout", "uif-to-unity-ui"
     if top in {"UI", "UI_US", "Intro", "symbol_us"} and suffix in TEXTURE_EXTS:
         return "ui-texture", "texture-to-unity"
+    if top == "DTex" and suffix in TERRAIN_TEXTURE_EXTS:
+        return "world-texture", "gtt-to-unity-terrain-texture"
     if top == "Zones" and suffix in ZONE_EXTS:
         return "world-zone", "zone-to-unity-world"
     if top == "Zones" and suffix in TEXTURE_EXTS:
@@ -69,10 +78,22 @@ def classify(relative: Path) -> tuple[str, str]:
         return "audio", "audio-to-unity"
     if suffix in FX_EXTS:
         return "fx-data", "fx-to-unity-vfx"
+    if suffix in AMBIENT_TEXT_EXTS:
+        return "world-zone", "ambient-text-to-canonical"
+    if suffix in WORLD_ENV_EXTS:
+        return "world-zone", "world-environment-to-unity"
+    if suffix in WINDOWS_MIDDLEWARE_EXTS and top == "Snd":
+        return "windows-only", "exclude-win32-audio-middleware"
     if suffix in TEXT_EXTS:
         return "config-text", "copy-runtime-data"
     if suffix in BINARY_DATA_EXTS:
         return "binary-data", "binary-to-canonical"
+
+    # This extensionless 1.298 artifact is not referenced by the pinned runtime,
+    # but retaining its exact hash/raw bytes keeps provenance complete.
+    if normalized == "chrselect/ka_cave":
+        return "binary-data", "preserve-unreferenced-legacy"
+
     return "unclassified", "none"
 
 
@@ -124,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         })
 
     payload = {
-        "schema": 1,
+        "schema": 2,
         "sourceRoot": str(source),
         "totalFiles": len(records),
         "totalBytes": total_bytes,
