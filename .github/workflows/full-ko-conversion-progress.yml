@@ -1,0 +1,61 @@
+name: Full KO conversion progress
+
+on:
+  push:
+    branches:
+      - phase-0-ko-mobile-baseline
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  convert-non3d:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout MMORPG
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install conversion dependency
+        run: python -m pip install --disable-pip-version-check pillow
+
+      - name: Fetch exact KO sources
+        run: python tools/setup_ko_sources.py
+
+      - name: Inventory complete source tree
+        run: |
+          mkdir -p artifacts
+          python tools/full_game_inventory.py \
+            --source unity/LegacySource/ko-assets-1298 \
+            --output artifacts/ko-1298-full-inventory.json
+
+      - name: Convert all deterministic non-3D assets
+        run: |
+          python tools/convert_non3d_assets.py \
+            --source unity/LegacySource/ko-assets-1298 \
+            --inventory artifacts/ko-1298-full-inventory.json \
+            --unity-assets unity/Assets \
+            --vendor-root tools/vendor \
+            --manifest artifacts/ko-1298-conversion-manifest.json
+
+      - name: Show strict final gate status
+        continue-on-error: true
+        run: |
+          python tools/full_game_gate.py \
+            --inventory artifacts/ko-1298-full-inventory.json \
+            --conversion artifacts/ko-1298-conversion-manifest.json
+
+      - name: Upload conversion reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ko-1298-conversion-progress
+          path: |
+            artifacts/ko-1298-full-inventory.json
+            artifacts/ko-1298-conversion-manifest.json
+          if-no-files-found: error
