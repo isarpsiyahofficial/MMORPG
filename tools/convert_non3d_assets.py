@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Bulk-convert every non-3D KO 1.298 asset that can be handled deterministically.
+"""Bulk-convert deterministic KO 1.298 non-3D assets for Unity/Android.
 
 - .tbl -> canonical JSON (no SQL)
-- .dxt -> PNG via OpenKO's pure-Python decoder
-- standard images -> copied unchanged
-- audio -> copied unchanged
-- config/text -> embedded in StreamingAssets
+- .dxt -> PNG via pinned OpenKO decoder
+- UI textures -> Resources/LegacyUI/Textures so original UIF references resolve at runtime
+- other standard images/audio/config -> deterministic Unity asset buckets
 
-UI layout, 3D/N3, world-zone and FX binary formats remain explicit pending records
-until their dedicated converters complete them. Nothing is silently ignored.
+Dedicated converters own UIF layout, 3D/N3, world-zone and FX binary formats.
+Nothing is silently ignored; those records stay explicit pending entries until converted.
 """
 from __future__ import annotations
 
@@ -37,6 +36,10 @@ def _copy(source_root: Path, output_root: Path, relative: Path, bucket: str) -> 
     return destination
 
 
+def _ui_texture_destination(unity_assets: Path, relative: Path) -> Path:
+    return unity_assets / "Resources" / "LegacyUI" / "Textures" / relative.with_suffix(".png")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path)
@@ -47,7 +50,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     source_root = args.source.resolve()
-    output_root = args.unity_assets.resolve() / "LegacyKO"
+    unity_assets = args.unity_assets.resolve()
+    output_root = unity_assets / "LegacyKO"
     inventory = json.loads(args.inventory.read_text(encoding="utf-8"))
     dxt_texture = _load_dxt_module(args.vendor_root.resolve())
 
@@ -84,7 +88,10 @@ def main(argv: list[str] | None = None) -> int:
             elif suffix == ".dxt":
                 texture = dxt_texture.load(source_root / relative)
                 rgba = dxt_texture.decompress_to_rgba(texture)
-                destination = output_root / "Textures" / relative.with_suffix(".png")
+                if category == "ui-texture":
+                    destination = _ui_texture_destination(unity_assets, relative)
+                else:
+                    destination = output_root / "Textures" / relative.with_suffix(".png")
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 Image.frombytes("RGBA", (texture.width, texture.height), rgba).save(destination, format="PNG")
                 result.update(
@@ -95,7 +102,17 @@ def main(argv: list[str] | None = None) -> int:
                     format=texture.fmt.name,
                 )
 
-            elif category in {"texture", "ui-texture", "world-texture", "fx-texture"}:
+            elif category == "ui-texture":
+                destination = _ui_texture_destination(unity_assets, relative)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if suffix == ".png":
+                    shutil.copy2(source_root / relative, destination)
+                else:
+                    with Image.open(source_root / relative) as image:
+                        image.convert("RGBA").save(destination, format="PNG")
+                result.update(status="converted", outputPath=str(destination))
+
+            elif category in {"texture", "world-texture", "fx-texture"}:
                 destination = _copy(source_root, output_root, relative, "Images")
                 result.update(status="copied", outputPath=str(destination))
 
