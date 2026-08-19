@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Read Knight Online CN3Texture (.dxt) files into RGBA without Direct3D.
+"""Read Knight Online texture files into RGBA without Direct3D.
 
-The uncompressed format handling follows the pinned OpenKO CN3Texture loader.
-Compressed DXT1-DXT5 data is delegated to the pinned OpenKO-blender decoder.
-Only the top mip is returned because Unity regenerates/platform-compresses its
-own Android texture representation from the lossless PNG conversion output.
+Most .dxt files are CN3Texture/NTF containers. The pinned 1.298 asset tree also
+contains a small set of files with a .dxt extension whose bytes are ordinary
+uncompressed TGA images; those are detected from the file structure rather than
+from filenames. CN3Texture raw Direct3D formats are decoded losslessly and
+DXT1-DXT5 payloads are delegated to the pinned OpenKO-blender decoder.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ D3DFMT_DXT2 = 0x32545844
 D3DFMT_DXT3 = 0x33545844
 D3DFMT_DXT4 = 0x34545844
 D3DFMT_DXT5 = 0x35545844
+TGA_UNCOMPRESSED = 0x54474132
 
 COMPRESSED_FORMATS = {
     D3DFMT_DXT1: "DXT1",
@@ -54,6 +56,8 @@ class KoTextureHeader:
     format_name: str
     has_mipmap: bool
     payload_offset: int
+    pixel_depth: int = 0
+    image_descriptor: int = 0
 
 
 @dataclass(frozen=True)
@@ -71,9 +75,55 @@ def _decode_name(raw: bytes) -> str:
     return raw.decode("latin-1", errors="replace")
 
 
+def _tga_header(data: bytes, path: Path) -> KoTextureHeader | None:
+    if len(data) < 18:
+        return None
+
+    id_length = data[0]
+    color_map_type = data[1]
+    image_type = data[2]
+    width = struct.unpack_from("<H", data, 12)[0]
+    height = struct.unpack_from("<H", data, 14)[0]
+    pixel_depth = data[16]
+    descriptor = data[17]
+
+    if color_map_type != 0 or image_type != 2 or pixel_depth not in (24, 32):
+        return None
+    if width <= 0 or height <= 0 or width > 16384 or height > 16384:
+        return None
+
+    payload_offset = 18 + id_length
+    bytes_per_pixel = pixel_depth // 8
+    payload_end = payload_offset + width * height * bytes_per_pixel
+    if payload_end > len(data):
+        return None
+
+    has_tga2_footer = len(data) >= 26 and data[-18:] == b"TRUEVISION-XFILE.\x00"
+    if payload_end != len(data) and not has_tga2_footer:
+        return None
+
+    return KoTextureHeader(
+        name=path.name,
+        identifier=b"TGA2",
+        width=width,
+        height=height,
+        format_value=TGA_UNCOMPRESSED,
+        format_name=f"TGA{pixel_depth}",
+        has_mipmap=False,
+        payload_offset=payload_offset,
+        pixel_depth=pixel_depth,
+        image_descriptor=descriptor,
+    )
+
+
 def read_header(path: Path | str) -> KoTextureHeader:
     path = Path(path)
     data = path.read_bytes()
+
+    tga = _tga_header(data, path)
+    if tga is not None:
+        return tga
+
     if len(data) < 24:
         raise KoTextureError(f"Texture is too short: {path}")
 
@@ -91,7 +141,7 @@ def read_header(path: Path | str) -> KoTextureHeader:
 
     if identifier[:3] != b"NTF":
         raise KoTextureError(
-            f"Unsupported texture header {identifier!r}; expected Noah Texture File (NTF): {path.name}"
+            f"Unsupported texture header {identifier!r}; expected NTF or uncompressed TGA: {path.name}"
         )
     if identifier[3] == 7:
         raise KoTextureError(
@@ -121,12 +171,14 @@ def read_header(path: Path | str) -> KoTextureHeader:
 
 def load_rgba(path: Path | str, vendor_root: Path | str) -> KoTextureRgba:
     path = Path(path)
+    data = path.read_bytes()
     header = read_header(path)
 
-    if header.format_value in COMPRESSED_FORMATS:
+    if header.format_value == TGA_UNCOMPRESSED:
+        rgba = _decode_tga(data, header)
+    elif header.format_value in COMPRESSED_FORMATS:
         rgba = _load_compressed(path, Path(vendor_root))
     else:
-        data = path.read_bytes()
         _, bytes_per_pixel = UNCOMPRESSED_FORMATS[header.format_value]
         byte_count = header.width * header.height * bytes_per_pixel
         end = header.payload_offset + byte_count
@@ -148,6 +200,31 @@ def load_rgba(path: Path | str, vendor_root: Path | str) -> KoTextureRgba:
             f"RGBA length mismatch for {path.name}: {len(rgba)} != {expected}"
         )
     return KoTextureRgba(header=header, rgba=rgba)
+
+
+def _decode_tga(data: bytes, header: KoTextureHeader) -> bytes:
+    bytes_per_pixel = header.pixel_depth // 8
+    pixel_count = header.width * header.height
+    payload_end = header.payload_offset + pixel_count * bytes_per_pixel
+    raw = data[header.payload_offset:payload_end]
+    out = bytearray(pixel_count * 4)
+
+    origin_right = bool(header.image_descriptor & 0x10)
+    origin_top = bool(header.image_descriptor & 0x20)
+
+    for source_y in range(header.height):
+        target_y = source_y if origin_top else header.height - 1 - source_y
+        for source_x in range(header.width):
+            target_x = header.width - 1 - source_x if origin_right else source_x
+            source_index = (source_y * header.width + source_x) * bytes_per_pixel
+            b = raw[source_index]
+            g = raw[source_index + 1]
+            r = raw[source_index + 2]
+            a = raw[source_index + 3] if bytes_per_pixel == 4 else 255
+            target_index = target_y * header.width + target_x
+            _write_rgba(out, target_index, r, g, b, a)
+
+    return bytes(out)
 
 
 def _load_compressed(path: Path, vendor_root: Path) -> bytes:
