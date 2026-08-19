@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - phase-0-ko-mobile-baseline
+  pull_request:
   workflow_dispatch:
 
 permissions:
