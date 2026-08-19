@@ -49,7 +49,7 @@ namespace MMORPG.Gameplay
 
             actions = new GameInputActions();
             actions.Enable();
-            ApplyAnimatorState(Vector2.zero, false);
+            ApplyAnimatorState(false);
         }
 
         private void Update()
@@ -120,7 +120,7 @@ namespace MMORPG.Gameplay
             velocity.y = verticalVelocity;
             controller.Move(velocity * Time.deltaTime);
 
-            ApplyAnimatorState(input, desired.sqrMagnitude > 0.001f);
+            ApplyAnimatorState(desired.sqrMagnitude > 0.001f);
         }
 
         private void HandleHotbar()
@@ -174,7 +174,7 @@ namespace MMORPG.Gameplay
             LocalCharacterStore.Save(state);
         }
 
-        private void ApplyAnimatorState(Vector2 input, bool moving)
+        private void ApplyAnimatorState(bool moving)
         {
             if (animator == null)
                 return;
@@ -185,12 +185,11 @@ namespace MMORPG.Gameplay
             animator.SetBool("AutoAttack", autoAttack);
         }
 
-        private static HotbarSlotState FindHotbar(int page, int slot)
+        private HotbarSlotState FindHotbar(int page, int slot)
         {
-            CharacterCreationState loaded = LocalCharacterStore.Load();
-            if (loaded?.hotbar == null)
+            if (state?.hotbar == null)
                 return null;
-            foreach (HotbarSlotState entry in loaded.hotbar)
+            foreach (HotbarSlotState entry in state.hotbar)
                 if (entry != null && entry.page == page && entry.slot == slot)
                     return entry;
             return null;
