@@ -2,16 +2,16 @@
 
 Prerequisites:
 - Blender 4.2+
-- OpenKO Assets Blender extension installed/enabled
+- tools/setup_ko_sources.py completed
 - SQL-free player look JSON produced by tools/extract_player_looks.py
 - local KO 1.298 asset tree
 
 Example:
     blender --background --python tools/ko_to_unity/export_player.py -- \
-      --source-root /path/to/ko-assets-1298 \
-      --looks-json /path/to/player_looks.json \
+      --source-root unity/LegacySource/ko-assets-1298 \
+      --looks-json unity/Assets/Resources/Data/player_looks.json \
       --race 12 \
-      --output /path/to/unity/Assets/LegacyConverted/el_male.fbx
+      --output unity/Assets/LegacyConverted/Players/el_male.fbx
 
 The source KO files are read-only inputs and are never overwritten.
 """
@@ -24,6 +24,9 @@ from pathlib import Path
 import sys
 
 import bpy
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PINNED_OPENKO_BLENDER = REPO_ROOT / "tools" / "vendor" / "OpenKO-blender"
 
 
 def _args_after_double_dash() -> list[str]:
@@ -150,6 +153,12 @@ def main() -> None:
         raise SystemExit(f"KO source root not found: {source_root}")
     if not looks_json.is_file():
         raise SystemExit(f"Player looks JSON not found: {looks_json}")
+    if not PINNED_OPENKO_BLENDER.is_dir():
+        raise SystemExit("Pinned OpenKO Blender tools are missing. Run: python tools/setup_ko_sources.py")
+
+    vendor_path = str(PINNED_OPENKO_BLENDER)
+    if vendor_path not in sys.path:
+        sys.path.insert(0, vendor_path)
 
     from openko_blender.blender import armature_builder, material_builder, mesh_builder
     from openko_blender.formats import n3anim, n3cpart, n3joint
@@ -191,9 +200,9 @@ def main() -> None:
     imported_parts = 0
     for part_key in part_keys:
         reference = str(record.get(part_key, "") or "")
-        part_path = _resolve_reference(source_root, index, reference)
         if not reference:
             continue
+        part_path = _resolve_reference(source_root, index, reference)
         if part_path is None:
             raise SystemExit(f"KO player part could not be resolved: {part_key}={reference!r}")
         if part_path.suffix.lower() != ".n3cpart":
