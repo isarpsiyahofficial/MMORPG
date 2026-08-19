@@ -26,7 +26,8 @@ namespace MMORPG.Character
 
         public bool IsValidForPhaseZero()
         {
-            return !string.IsNullOrWhiteSpace(characterName)
+            return CharacterNameRules.IsValid(characterName)
+                   && (nation == 1 || nation == 2)
                    && race > 0
                    && characterClass > 0
                    && strength >= 0
