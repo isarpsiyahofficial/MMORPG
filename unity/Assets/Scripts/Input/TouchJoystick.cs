@@ -9,6 +9,13 @@ namespace MMORPG.Input
         [SerializeField] private RectTransform handle;
         [SerializeField, Range(0.2f, 1f)] private float handleRange = 0.6f;
 
+        public void Configure(RectTransform backgroundRect, RectTransform handleRect, float range = 0.6f)
+        {
+            background = backgroundRect;
+            handle = handleRect;
+            handleRange = Mathf.Clamp(range, 0.2f, 1f);
+        }
+
         public void OnPointerDown(PointerEventData eventData)
         {
             OnDrag(eventData);
