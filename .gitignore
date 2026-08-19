@@ -28,6 +28,9 @@ MemoryCaptures/
 unity/LegacySource/**
 !unity/LegacySource/README.md
 
+# External tools fetched at their pinned revisions.
+tools/vendor/
+
 # Generated parity reports
 unity/Assets/StreamingAssets/Baseline/*.generated.json
 unity/Assets/StreamingAssets/Baseline/*.generated.sha256
