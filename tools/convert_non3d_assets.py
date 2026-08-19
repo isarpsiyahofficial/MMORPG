@@ -5,6 +5,7 @@
 - .dxt -> lossless PNG, including KO's raw Direct3D pixel formats
 - UI textures -> Resources/LegacyUI/Textures so original UIF references resolve at runtime
 - a lowercase legacy-path index preserves Windows-style case-insensitive resource lookup on Android
+- Win32-only middleware is explicitly excluded instead of being shipped in the APK
 - other standard images/audio/config -> deterministic Unity asset buckets
 
 Dedicated converters own UIF layout, 3D/N3, world-zone and FX binary formats.
@@ -21,10 +22,6 @@ import sys
 from ko_tbl import read_tbl, to_json_dict
 from ko_texture import load_rgba
 
-# This 77-byte file exists in the pinned 1.298 asset tree, but the pinned OpenKO
-# runtime has no reference to "Slander" and it does not parse as CN3TableBase.
-# Preserve the source bytes in the APK data corpus instead of inventing a table
-# schema or allowing one unused legacy artifact to poison canonical runtime data.
 UNREFERENCED_LEGACY_TABLES = {"data/slander_us.tbl"}
 
 
@@ -80,7 +77,22 @@ def main(argv: list[str] | None = None) -> int:
         }
 
         try:
-            if suffix == ".tbl" and normalized_source in UNREFERENCED_LEGACY_TABLES:
+            if strategy == "exclude-win32-audio-middleware":
+                result.update(
+                    status="platform-excluded",
+                    reason="Native Win32 Miles Sound System middleware cannot execute on Android; Unity audio replaces it",
+                    sourcePreservedByHash=entry.get("sha256"),
+                )
+
+            elif strategy == "preserve-unreferenced-legacy":
+                destination = _copy(source_root, output_root, relative, "StreamingAssets/Raw")
+                result.update(
+                    status="embedded",
+                    outputPath=str(destination),
+                    reason="Unreferenced legacy artifact preserved byte-for-byte for provenance",
+                )
+
+            elif suffix == ".tbl" and normalized_source in UNREFERENCED_LEGACY_TABLES:
                 destination = _copy(source_root, output_root, relative, "StreamingAssets/Raw")
                 result.update(
                     status="embedded",
@@ -138,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
                     "LegacyUI/Textures/" + relative.with_suffix("").as_posix()
                 )
 
-            elif category in {"texture", "world-texture", "fx-texture"}:
+            elif category in {"texture", "world-texture", "fx-texture"} and suffix != ".gtt":
                 destination = _copy(source_root, output_root, relative, "Images")
                 result.update(status="copied", outputPath=str(destination))
 
@@ -175,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     payload = {
-        "schema": 1,
+        "schema": 2,
         "sourceFiles": int(inventory.get("totalFiles", len(records))),
         "uiTextureIndex": str(index_path),
         "uiTextureCount": len(ui_texture_index),
@@ -185,7 +197,10 @@ def main(argv: list[str] | None = None) -> int:
     args.manifest.parent.mkdir(parents=True, exist_ok=True)
     args.manifest.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    done = sum(1 for r in records if r["status"] in {"converted", "copied", "embedded", "generated"})
+    done = sum(
+        1 for r in records
+        if r["status"] in {"converted", "copied", "embedded", "generated", "platform-excluded"}
+    )
     pending = sum(1 for r in records if r["status"] == "pending")
     failed = sum(1 for r in records if r["status"] == "failed")
     print(
