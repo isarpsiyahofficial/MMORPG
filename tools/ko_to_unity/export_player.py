@@ -6,14 +6,9 @@ Prerequisites:
 - SQL-free player look JSON produced by tools/extract_player_looks.py
 - local KO 1.298 asset tree
 
-Example:
-    blender --background --python tools/ko_to_unity/export_player.py -- \
-      --source-root unity/LegacySource/ko-assets-1298 \
-      --looks-json unity/Assets/Resources/Data/player_looks.json \
-      --race 12 \
-      --output unity/Assets/LegacyConverted/Players/el_male.fbx
-
-The source KO files are read-only inputs and are never overwritten.
+The source KO files are read-only inputs and are never overwritten. Alongside
+the FBX, this exporter writes an animation manifest preserving the exact
+N3AnimControl index -> clip-name mapping used by the original client.
 """
 
 from __future__ import annotations
@@ -143,6 +138,35 @@ def _export_fbx(output: Path) -> None:
         raise SystemExit(f"FBX export failed: {result}")
 
 
+def _write_animation_manifest(output: Path, race: int, anim_path: Path, anim_control) -> Path:
+    manifest = output.with_suffix(".animations.json")
+    clips = []
+    for index, anim in enumerate(anim_control.animations):
+        clips.append(
+            {
+                "index": index,
+                "name": anim.name or f"KO_Player_{race}_{index:03d}",
+                "frameStart": float(anim.frm_start),
+                "frameEnd": float(anim.frm_end),
+            }
+        )
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "race": race,
+                "animationSource": anim_path.name,
+                "clipCount": len(clips),
+                "clips": clips,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def main() -> None:
     args = _parse_args()
     source_root = args.source_root.expanduser().resolve()
@@ -238,10 +262,12 @@ def main() -> None:
     armature_builder.build_animations(bpy.context, arm_data, root_joint, anim_control)
 
     _export_fbx(output)
+    manifest = _write_animation_manifest(output, args.race, anim_path, anim_control)
     print(
         f"KO player race {args.race} exported with {imported_parts} original parts and "
         f"{len(anim_control.animations)} animations: {output}"
     )
+    print(f"KO animation index manifest: {manifest}")
 
 
 if __name__ == "__main__":
