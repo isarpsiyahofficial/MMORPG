@@ -4,6 +4,7 @@
 - .tbl -> canonical JSON (no SQL)
 - .dxt -> PNG via pinned OpenKO decoder
 - UI textures -> Resources/LegacyUI/Textures so original UIF references resolve at runtime
+- a lowercase legacy-path index preserves Windows-style case-insensitive resource lookup on Android
 - other standard images/audio/config -> deterministic Unity asset buckets
 
 Dedicated converters own UIF layout, 3D/N3, world-zone and FX binary formats.
@@ -40,6 +41,10 @@ def _ui_texture_destination(unity_assets: Path, relative: Path) -> Path:
     return unity_assets / "Resources" / "LegacyUI" / "Textures" / relative.with_suffix(".png")
 
 
+def _legacy_key(path: str) -> str:
+    return path.replace("\\", "/").lstrip("./").lower()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path)
@@ -60,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, object]] = []
     errors: list[str] = []
+    ui_texture_index: dict[str, str] = {}
 
     for entry in inventory.get("files", []):
         source_path = str(entry["path"])
@@ -101,6 +107,10 @@ def main(argv: list[str] | None = None) -> int:
                     height=texture.height,
                     format=texture.fmt.name,
                 )
+                if category == "ui-texture":
+                    ui_texture_index[_legacy_key(source_path)] = (
+                        "LegacyUI/Textures/" + relative.with_suffix("").as_posix()
+                    )
 
             elif category == "ui-texture":
                 destination = _ui_texture_destination(unity_assets, relative)
@@ -111,6 +121,9 @@ def main(argv: list[str] | None = None) -> int:
                     with Image.open(source_root / relative) as image:
                         image.convert("RGBA").save(destination, format="PNG")
                 result.update(status="converted", outputPath=str(destination))
+                ui_texture_index[_legacy_key(source_path)] = (
+                    "LegacyUI/Textures/" + relative.with_suffix("").as_posix()
+                )
 
             elif category in {"texture", "world-texture", "fx-texture"}:
                 destination = _copy(source_root, output_root, relative, "Images")
@@ -131,9 +144,28 @@ def main(argv: list[str] | None = None) -> int:
 
         records.append(result)
 
+    index_path = unity_assets / "Resources" / "LegacyUI" / "texture_index.json"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "entries": [
+                    {"legacyPath": key, "resourcePath": value}
+                    for key, value in sorted(ui_texture_index.items())
+                ],
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
     payload = {
         "schema": 1,
         "sourceFiles": int(inventory.get("totalFiles", len(records))),
+        "uiTextureIndex": str(index_path),
+        "uiTextureCount": len(ui_texture_index),
         "files": records,
         "errors": errors,
     }
@@ -143,7 +175,10 @@ def main(argv: list[str] | None = None) -> int:
     done = sum(1 for r in records if r["status"] in {"converted", "copied", "embedded", "generated"})
     pending = sum(1 for r in records if r["status"] == "pending")
     failed = sum(1 for r in records if r["status"] == "failed")
-    print(f"NON-3D CONVERSION: completed={done} pending={pending} failed={failed} total={len(records)}")
+    print(
+        f"NON-3D CONVERSION: completed={done} pending={pending} failed={failed} "
+        f"total={len(records)} ui_textures={len(ui_texture_index)}"
+    )
     if errors:
         for error in errors[:100]:
             print("ERROR", error)
