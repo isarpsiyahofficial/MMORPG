@@ -8,6 +8,12 @@ namespace MMORPG.UI
     public sealed class LegacyUiButtonVisual : MonoBehaviour,
         IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler, IPointerExitHandler
     {
+        // CN3UIButton::eBTN_STATE stored in each child image's reserved field.
+        private const int Normal = 0;
+        private const int Down = 1;
+        private const int On = 2;
+        private const int Disabled = 3;
+
         private readonly Dictionary<int, Graphic> states = new Dictionary<int, Graphic>();
         private bool pointerInside;
 
@@ -16,36 +22,36 @@ namespace MMORPG.UI
             if (graphic == null)
                 return;
             states[reservedState] = graphic;
-            ShowState(2); // UI_STATE_BUTTON_NORMAL
+            ShowState(Normal);
         }
 
         public void OnPointerDown(PointerEventData eventData)
         {
-            ShowState(3); // UI_STATE_BUTTON_DOWN
+            ShowState(Down);
         }
 
         public void OnPointerUp(PointerEventData eventData)
         {
-            ShowState(pointerInside ? 6 : 2); // ON : NORMAL
+            ShowState(pointerInside ? On : Normal);
         }
 
         public void OnPointerEnter(PointerEventData eventData)
         {
             pointerInside = true;
             if (!eventData.dragging)
-                ShowState(6); // UI_STATE_BUTTON_ON
+                ShowState(On);
         }
 
         public void OnPointerExit(PointerEventData eventData)
         {
             pointerInside = false;
             if (!eventData.dragging)
-                ShowState(2);
+                ShowState(Normal);
         }
 
         public void SetInteractable(bool interactable)
         {
-            ShowState(interactable ? 2 : 7); // NORMAL : DISABLE
+            ShowState(interactable ? Normal : Disabled);
         }
 
         private void ShowState(int requested)
@@ -55,8 +61,8 @@ namespace MMORPG.UI
 
             int selected = states.ContainsKey(requested)
                 ? requested
-                : states.ContainsKey(2)
-                    ? 2
+                : states.ContainsKey(Normal)
+                    ? Normal
                     : FirstKey();
 
             foreach (KeyValuePair<int, Graphic> pair in states)
@@ -67,7 +73,7 @@ namespace MMORPG.UI
         {
             foreach (int key in states.Keys)
                 return key;
-            return 0;
+            return Normal;
         }
     }
 }
