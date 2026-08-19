@@ -27,6 +27,13 @@ namespace MMORPG.Gameplay
 
         public CharacterCreationState State => state;
 
+        public void Configure(Transform gameplayCamera, Animator characterAnimator = null)
+        {
+            cameraTransform = gameplayCamera;
+            if (characterAnimator != null)
+                animator = characterAnimator;
+        }
+
         private void Awake()
         {
             controller = GetComponent<CharacterController>();
