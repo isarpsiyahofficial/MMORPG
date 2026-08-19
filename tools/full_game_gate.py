@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-SUCCESS = {"converted", "copied", "embedded", "generated"}
+SUCCESS = {"converted", "copied", "embedded", "generated", "platform-excluded"}
 MANDATORY_CATEGORIES = {
     "3d-asset", "game-data", "audio", "world-zone", "texture", "ui-layout", "ui-texture",
 }
@@ -33,6 +33,16 @@ def main(argv: list[str] | None = None) -> int:
     extra = sorted(set(converted) - set(source))
     unclassified = list(inventory.get("unclassified", []))
 
+    invalid_exclusions = sorted(
+        path for path, entry in converted.items()
+        if entry.get("status") == "platform-excluded"
+        and (
+            source.get(path, {}).get("category") != "windows-only"
+            or not str(entry.get("reason", "")).strip()
+            or not str(entry.get("sourcePreservedByHash", "")).strip()
+        )
+    )
+
     present_categories = {entry.get("category") for entry in source.values()}
     category_gaps = sorted(MANDATORY_CATEGORIES - present_categories)
 
@@ -42,12 +52,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"FAILED/PENDING: {len(failed)}")
     print(f"EXTRA: {len(extra)}")
     print(f"UNCLASSIFIED: {len(unclassified)}")
+    print(f"INVALID PLATFORM EXCLUSIONS: {len(invalid_exclusions)}")
 
     for title, items in (
         ("MISSING", missing),
         ("FAILED/PENDING", failed),
         ("EXTRA", extra),
         ("UNCLASSIFIED", unclassified),
+        ("INVALID PLATFORM EXCLUSIONS", invalid_exclusions),
         ("CATEGORY GAPS", category_gaps),
     ):
         if items:
@@ -57,7 +69,14 @@ def main(argv: list[str] | None = None) -> int:
             if len(items) > 100:
                 print(f"  ... and {len(items) - 100} more")
 
-    ok = not missing and not failed and not extra and not unclassified and not category_gaps
+    ok = (
+        not missing
+        and not failed
+        and not extra
+        and not unclassified
+        and not invalid_exclusions
+        and not category_gaps
+    )
     if ok:
         print("FULL KO CONVERSION GATE: PASS")
         return 0
