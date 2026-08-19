@@ -43,6 +43,14 @@ jobs:
             --vendor-root tools/vendor \
             --manifest artifacts/ko-1298-conversion-manifest.json
 
+      - name: Convert original CharacterCreate UIF
+        run: |
+          mkdir -p unity/Assets/Resources/LegacyUI
+          python tools/convert_uif.py \
+            --source-root unity/LegacySource/ko-assets-1298 \
+            --discover-character-create \
+            --output unity/Assets/Resources/LegacyUI/character_create.json
+
       - name: Show strict final gate status
         continue-on-error: true
         run: |
@@ -58,4 +66,5 @@ jobs:
           path: |
             artifacts/ko-1298-full-inventory.json
             artifacts/ko-1298-conversion-manifest.json
+            unity/Assets/Resources/LegacyUI/character_create.json
           if-no-files-found: error
