@@ -34,6 +34,37 @@ jobs:
             --source unity/LegacySource/ko-assets-1298 \
             --output artifacts/ko-1298-full-inventory.json
 
+      - name: Inspect legacy texture header variants
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import struct
+
+          root = Path('unity/LegacySource/ko-assets-1298')
+          names = {
+              'itemicon_3_2041_01_1.dxt',
+              'itemicon_3_2041_01_2.dxt',
+              'itemicon_3_2041_01_3.dxt',
+              'itemicon_3_3031_01_4.dxt',
+          }
+          found = []
+          for path in root.rglob('*.dxt'):
+              if path.name.lower() not in names:
+                  continue
+              data = path.read_bytes()
+              first = data[:64]
+              ints = [struct.unpack_from('<I', first, offset)[0] for offset in range(0, min(48, len(first) - 3), 4)]
+              print('TEXTURE_HEADER', path.relative_to(root).as_posix())
+              print('SIZE', len(data))
+              print('HEX64', first.hex())
+              print('U32', ints)
+              found.append(path.name.lower())
+          missing = sorted(names - set(found))
+          print('FOUND', len(found), 'MISSING', missing)
+          if missing:
+              raise SystemExit(2)
+          PY
+
       - name: Convert all deterministic non-3D assets
         run: |
           python tools/convert_non3d_assets.py \
