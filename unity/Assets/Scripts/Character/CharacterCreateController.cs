@@ -48,6 +48,25 @@ namespace MMORPG.Character
                 : new[] { 201, 202, 203, 204 };
         }
 
+        public bool IsClassAvailable(int characterClass)
+        {
+            if (state.race <= 0 || !Contains(GetClassOptions(), characterClass))
+                return false;
+
+            int kind = characterClass % 100;
+            return state.race switch
+            {
+                11 => kind == 1,                              // El Morad barbarian: warrior
+                12 => kind >= 1 && kind <= 4,                // El Morad male: all base classes
+                13 => kind >= 1 && kind <= 4,                // El Morad female: all base classes
+                1 => kind == 1,                               // Karus Arktuarek: warrior
+                2 => kind == 2 || kind == 4,                 // Karus Tuarek: rogue/priest
+                3 => kind == 3,                               // Karus Wrinkle Tuarek: mage
+                4 => kind == 4,                               // Karus Puri Tuarek: priest
+                _ => false,
+            };
+        }
+
         public bool SelectRace(int race)
         {
             if (!Contains(GetRaceOptions(), race))
@@ -67,10 +86,10 @@ namespace MMORPG.Character
         {
             if (state.race <= 0)
                 return Reject("Select a race first.");
-            if (!Contains(GetClassOptions(), characterClass))
-                return Reject("Selected class is not valid for this nation.");
+            if (!IsClassAvailable(characterClass))
+                return Reject("This class is disabled for the selected race in the original KO rules.");
             if (!CharacterDefaultsCatalog.TryGet(state.race, characterClass, out CharacterDefaultEntry defaults))
-                return Reject("This race/class combination is disabled by the original KO data.");
+                return Reject("Original KO NewChrValue data does not contain this race/class combination.");
 
             state.characterClass = characterClass;
             ApplyDefaults(defaults);
@@ -138,8 +157,8 @@ namespace MMORPG.Character
                 return Reject("Character name contains a forbidden character or is empty.");
             if (state.race <= 0)
                 return Reject("Race is not selected.");
-            if (state.characterClass <= 0)
-                return Reject("Class is not selected.");
+            if (state.characterClass <= 0 || !IsClassAvailable(state.characterClass))
+                return Reject("Class is not selected or is invalid for this race.");
             if (bonusPoints > 0)
                 return Reject("Spend all bonus stat points before creating the character.");
             if (!state.IsValidForPhaseZero())
@@ -155,6 +174,11 @@ namespace MMORPG.Character
         {
             if (previewRoot != null)
                 previewRoot.Rotate(0f, -deltaDegrees, 0f, Space.World);
+        }
+
+        public void SetPreviewRoot(Transform value)
+        {
+            previewRoot = value;
         }
 
         private void SetFace(int value)
