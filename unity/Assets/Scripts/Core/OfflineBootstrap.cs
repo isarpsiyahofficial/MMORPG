@@ -11,7 +11,7 @@ namespace MMORPG.Core
         [SerializeField] private int nation = 2;
         [SerializeField] private string internalAccountId = "offline-mobile";
         [SerializeField] private int characterSlot;
-        [SerializeField] private int initialZoneId = 1;
+        [SerializeField] private int initialZoneId = 2;
         [SerializeField] private bool openExistingCharacterDirectly = true;
 
         private void Start()
