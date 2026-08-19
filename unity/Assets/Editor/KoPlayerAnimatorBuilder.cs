@@ -146,12 +146,6 @@ namespace MMORPG.EditorTools
 
         private static Dictionary<int, AnimationClip> ResolveClips(string modelPath, AnimationManifest manifest)
         {
-            AnimationClip[] imported = Array.FindAll(
-                AssetDatabase.LoadAllAssetsAtPath(modelPath),
-                asset => asset is AnimationClip && !asset.name.StartsWith("__preview__", StringComparison.OrdinalIgnoreCase)
-            ) as AnimationClip[];
-
-            // Array.FindAll<T> cannot cast Object[] directly on all Unity versions; build explicitly.
             List<AnimationClip> clipList = new List<AnimationClip>();
             foreach (UnityEngine.Object asset in AssetDatabase.LoadAllAssetsAtPath(modelPath))
             {
