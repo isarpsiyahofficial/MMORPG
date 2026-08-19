@@ -1,25 +1,47 @@
+using MMORPG.Persistence;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 namespace MMORPG.Core
 {
-    /// <summary>
-    /// Phase-0 startup path. The Android test build intentionally bypasses
-    /// account login and server selection and opens the character creation scene.
-    /// </summary>
     public sealed class OfflineBootstrap : MonoBehaviour
     {
         [SerializeField] private string characterCreateScene = "CharacterCreate";
+        [SerializeField] private string worldScene = "World";
+        [SerializeField] private int nation = 2;
+        [SerializeField] private string internalAccountId = "offline-mobile";
+        [SerializeField] private int characterSlot;
+        [SerializeField] private int initialZoneId = 1;
+        [SerializeField] private bool openExistingCharacterDirectly = true;
 
         private void Start()
         {
-            if (string.IsNullOrWhiteSpace(characterCreateScene))
+            OfflineBootstrapProfile profile = new OfflineBootstrapProfile
             {
-                Debug.LogError("CharacterCreate scene name is not configured.");
+                nation = nation,
+                internalAccountId = internalAccountId,
+                characterSlot = characterSlot,
+                initialZoneId = initialZoneId,
+            };
+            OfflineBootstrapSession.Set(profile);
+
+            if (openExistingCharacterDirectly && LocalCharacterStore.Load() != null)
+            {
+                Load(worldScene);
                 return;
             }
 
-            SceneManager.LoadScene(characterCreateScene, LoadSceneMode.Single);
+            Load(characterCreateScene);
+        }
+
+        private static void Load(string sceneName)
+        {
+            if (string.IsNullOrWhiteSpace(sceneName))
+            {
+                Debug.LogError("Bootstrap scene name is not configured.");
+                return;
+            }
+            SceneManager.LoadScene(sceneName, LoadSceneMode.Single);
         }
     }
 }
