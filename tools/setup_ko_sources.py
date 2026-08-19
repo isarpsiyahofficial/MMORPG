@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fetch the exact public source inputs used by the phase-0 KO mobile port.
+"""Fetch the exact public source inputs used by the complete KO mobile port.
 
-This keeps legacy assets outside Git history while making the conversion setup
-repeatable. It never modifies the upstream source repositories.
+All upstream inputs are pinned to commits. Legacy game assets stay outside this
+repository's Git history and are treated as read-only conversion inputs.
 """
 
 from __future__ import annotations
@@ -15,10 +15,13 @@ import sys
 
 KO_ASSETS_REPO = "https://github.com/ko4life-net/ko-assets.git"
 KO_ASSETS_BRANCH = "1298"
-KO_ASSETS_COMMIT = "705874881c8308e0a45a0c849e4b3881088d8138"
+KO_ASSETS_COMMIT = "2055ee6ed77f1b5cfef23832dd5bc31909e14a66"
 
 OPENKO_BLENDER_REPO = "https://github.com/Open-KO/OpenKO-blender.git"
 OPENKO_BLENDER_COMMIT = "e47142e785f59529a894225471e328d9cd8b3ac4"
+
+OPENKO_SOURCE_REPO = "https://github.com/Open-KO/KnightOnline.git"
+OPENKO_SOURCE_COMMIT = "7d6cf81093e142c928c2ac9510512b2b182178b5"
 
 
 def run(*args: str, cwd: Path | None = None) -> str:
@@ -72,7 +75,9 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_root = Path(__file__).resolve().parents[1]
     legacy_assets = repo_root / "unity" / "LegacySource" / "ko-assets-1298"
-    blender_tools = repo_root / "tools" / "vendor" / "OpenKO-blender"
+    vendor_root = repo_root / "tools" / "vendor"
+    blender_tools = vendor_root / "OpenKO-blender"
+    openko_source = vendor_root / "OpenKO-source"
 
     clone_exact(
         KO_ASSETS_REPO,
@@ -87,8 +92,14 @@ def main(argv: list[str] | None = None) -> int:
         OPENKO_BLENDER_COMMIT,
         force=args.force,
     )
+    clone_exact(
+        OPENKO_SOURCE_REPO,
+        openko_source,
+        OPENKO_SOURCE_COMMIT,
+        force=args.force,
+    )
 
-    print("KO 1.298 source inputs are ready and pinned.")
+    print("KO 1.298 assets, OpenKO conversion tools and reference source are ready and pinned.")
     return 0
 
 
