@@ -1,0 +1,41 @@
+name: Full KO 1.298 inventory
+
+on:
+  push:
+    branches:
+      - phase-0-ko-mobile-baseline
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  full-source-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout MMORPG
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch exact KO 1.298 sources
+        run: python tools/setup_ko_sources.py
+
+      - name: Inventory every KO file
+        run: |
+          mkdir -p artifacts
+          python tools/full_game_inventory.py \
+            --source unity/LegacySource/ko-assets-1298 \
+            --output artifacts/ko-1298-full-inventory.json \
+            --fail-on-unclassified
+
+      - name: Upload complete inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ko-1298-full-inventory
+          path: artifacts/ko-1298-full-inventory.json
+          if-no-files-found: error
