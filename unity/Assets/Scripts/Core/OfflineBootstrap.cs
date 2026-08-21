@@ -1,3 +1,5 @@
+using System;
+using MMORPG.Legacy;
 using MMORPG.Persistence;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -14,8 +16,19 @@ namespace MMORPG.Core
         [SerializeField] private int initialZoneId = 2;
         [SerializeField] private bool openExistingCharacterDirectly = true;
 
-        private void Start()
+        private async void Start()
         {
+            try
+            {
+                await KoRuntime.Files.InitializeAsync();
+            }
+            catch (Exception exc)
+            {
+                Debug.LogException(exc);
+                enabled = false;
+                return;
+            }
+
             OfflineBootstrapProfile profile = new OfflineBootstrapProfile
             {
                 nation = nation,
