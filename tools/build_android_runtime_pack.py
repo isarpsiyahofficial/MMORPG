@@ -105,13 +105,19 @@ def main(argv: list[str] | None = None) -> int:
         "embeddedBytes": bytes_copied,
         "files": records,
     }
+    payload = json.dumps(manifest, indent=2, ensure_ascii=False)
+
+    runtime_manifest = runtime_root / "runtime-pack.json"
+    runtime_manifest.write_text(payload, encoding="utf-8")
+
     args.output_manifest.parent.mkdir(parents=True, exist_ok=True)
-    args.output_manifest.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    args.output_manifest.write_text(payload, encoding="utf-8")
 
     print(
         f"ANDROID RUNTIME PACK: exact={copied} platform-excluded={excluded} "
         f"bytes={bytes_copied} total={len(records)}"
     )
+    print(f"RUNTIME INDEX: {runtime_manifest}")
     if copied + excluded != len(records):
         return 3
     return 0
