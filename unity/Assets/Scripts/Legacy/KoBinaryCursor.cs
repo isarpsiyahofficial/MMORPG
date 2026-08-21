@@ -127,22 +127,10 @@ namespace MMORPG.Legacy
 
         private static string DecodeLegacyString(byte[] raw)
         {
-            try
-            {
-                return new UTF8Encoding(false, true).GetString(raw);
-            }
-            catch (DecoderFallbackException)
-            {
-                try
-                {
-                    Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-                    return Encoding.GetEncoding(949).GetString(raw);
-                }
-                catch
-                {
-                    return Encoding.GetEncoding(1252).GetString(raw);
-                }
-            }
+            // KO runtime paths/IDs in the 1.298 asset pack are overwhelmingly ASCII.
+            // UTF-8 with replacement is deterministic under IL2CPP and avoids relying
+            // on optional code-page providers that may be stripped from Android.
+            return Encoding.UTF8.GetString(raw);
         }
 
         private void Require(int count)
