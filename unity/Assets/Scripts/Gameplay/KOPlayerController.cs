@@ -1,5 +1,6 @@
 using MMORPG.Character;
 using MMORPG.Input;
+using MMORPG.Legacy;
 using MMORPG.Persistence;
 using UnityEngine;
 
@@ -19,6 +20,7 @@ namespace MMORPG.Gameplay
         private CharacterController controller;
         private GameInputActions actions;
         private CharacterCreationState state;
+        private KoSkeletonAnimator koAnimator;
         private float verticalVelocity;
         private float saveTimer;
         private bool autoRun;
@@ -34,11 +36,19 @@ namespace MMORPG.Gameplay
                 animator = characterAnimator;
         }
 
+        public void BindKoAnimator(KoSkeletonAnimator originalAnimator)
+        {
+            koAnimator = originalAnimator;
+            ApplyAnimatorState(false);
+        }
+
         private void Awake()
         {
             controller = GetComponent<CharacterController>();
             if (animator == null)
                 animator = GetComponentInChildren<Animator>(true);
+            if (koAnimator == null)
+                koAnimator = GetComponentInChildren<KoSkeletonAnimator>(true);
             if (cameraTransform == null && Camera.main != null)
                 cameraTransform = Camera.main.transform;
 
@@ -183,6 +193,22 @@ namespace MMORPG.Gameplay
 
         private void ApplyAnimatorState(bool moving)
         {
+            if (koAnimator != null)
+            {
+                int animationIndex;
+                bool loopAnimation = true;
+                if (sitting)
+                    animationIndex = 12; // ANI_SITDOWN_BREATH
+                else if (autoAttack)
+                    animationIndex = 15; // ANI_ATTACK_WITH_NAKED_WHEN_MOVE until equipped weapon resolves its attack family
+                else if (moving)
+                    animationIndex = state != null && state.isRunning ? 2 : 1; // ANI_RUN / ANI_WALK
+                else
+                    animationIndex = 0; // ANI_BREATH
+                koAnimator.Play(animationIndex, loopAnimation);
+                return;
+            }
+
             if (animator == null)
                 return;
 
