@@ -68,6 +68,28 @@ namespace MMORPG.Legacy
     }
 
     [Serializable]
+    public sealed class KoIndexedMeshData
+    {
+        public string name = string.Empty;
+        public int faceCount;
+        public int vertexCount;
+        public int uvCount;
+        public Vector3[] positions = Array.Empty<Vector3>();
+        public Vector3[] normals = Array.Empty<Vector3>();
+        public int[] indices = Array.Empty<int>();
+        public Vector2[] uvs = Array.Empty<Vector2>();
+        public int[] uvIndices = Array.Empty<int>();
+    }
+
+    [Serializable]
+    public sealed class KoVectorMeshData
+    {
+        public string name = string.Empty;
+        public Vector3[] vertices = Array.Empty<Vector3>();
+        public int[] indices = Array.Empty<int>();
+    }
+
+    [Serializable]
     public sealed class KoSkinInfluence
     {
         public Vector3 origin;
