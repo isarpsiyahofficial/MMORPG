@@ -1,0 +1,57 @@
+name: Legacy texture header probe
+
+on:
+  push:
+    branches:
+      - phase-0-ko-mobile-baseline
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout MMORPG
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch exact KO sources
+        run: python tools/setup_ko_sources.py
+
+      - name: Print exact legacy headers
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import struct
+
+          root = Path('unity/LegacySource/ko-assets-1298')
+          wanted = {
+              'itemicon_3_2041_01_1.dxt',
+              'itemicon_3_2041_01_2.dxt',
+              'itemicon_3_2041_01_3.dxt',
+              'itemicon_3_3031_01_4.dxt',
+          }
+          found = set()
+          for path in root.rglob('*'):
+              if not path.is_file() or path.name.lower() not in wanted:
+                  continue
+              data = path.read_bytes()
+              head = data[:96]
+              found.add(path.name.lower())
+              print('===', path.relative_to(root).as_posix(), '===')
+              print('SIZE=', len(data))
+              print('HEX96=', head.hex())
+              for offset in range(0, min(64, len(head) - 3), 4):
+                  print(f'U32[{offset:02d}]={struct.unpack_from("<I", head, offset)[0]}')
+          missing = wanted - found
+          if missing:
+              print('MISSING=', sorted(missing))
+              raise SystemExit(2)
+          PY

@@ -1,0 +1,36 @@
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+UserSettings/
+MemoryCaptures/
+
+# IDE
+.vs/
+.idea/
+.vscode/
+*.csproj
+*.sln
+*.user
+*.userprefs
+
+# Android / Gradle
+.gradle/
+**/gradleOut/
+*.apk
+*.aab
+
+# Local Knight Online source/data files.
+# Do not commit source game assets to this public repository.
+unity/LegacySource/**
+!unity/LegacySource/README.md
+
+# External tools fetched at their pinned revisions.
+tools/vendor/
+
+# Generated parity reports
+unity/Assets/StreamingAssets/Baseline/*.generated.json
+unity/Assets/StreamingAssets/Baseline/*.generated.sha256

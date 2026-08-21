@@ -1,0 +1,29 @@
+name: KO conversion tools
+
+on:
+  push:
+    branches:
+      - main
+      - phase-0-ko-mobile-baseline
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile Python tools
+        run: python -m compileall -q tools
+
+      - name: Run KO TBL tests
+        run: python -m unittest discover -s tools/tests -p 'test_*.py' -v
