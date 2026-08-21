@@ -21,6 +21,7 @@ namespace MMORPG.Core
             try
             {
                 await KoRuntime.Files.InitializeAsync();
+                await KoTextures.Store.InitializeAsync();
             }
             catch (Exception exc)
             {
