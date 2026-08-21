@@ -59,7 +59,16 @@ jobs:
             --vendor-root tools/vendor \
             --output artifacts/ko-1298-n3-validation.json
 
-      - name: Convert original CharacterCreate UIF
+      - name: Convert every original KO UIF
+        run: |
+          mkdir -p unity/Assets/StreamingAssets/KOConverted/UI
+          python tools/convert_uif.py \
+            --source-root unity/LegacySource/ko-assets-1298 \
+            --all \
+            --output-root unity/Assets/StreamingAssets/KOConverted/UI \
+            --manifest artifacts/ko-1298-uif-validation.json
+
+      - name: Convert original CharacterCreate UIF for bootstrap Resources
         run: |
           mkdir -p unity/Assets/Resources/LegacyUI
           python tools/convert_uif.py \
@@ -83,6 +92,7 @@ jobs:
             artifacts/ko-1298-conversion-manifest.json
             artifacts/ko-1298-runtime-pack.json
             artifacts/ko-1298-n3-validation.json
+            artifacts/ko-1298-uif-validation.json
             unity/Assets/Resources/LegacyUI/character_create.json
             unity/Assets/StreamingAssets/KOConverted/texture-index.json
           if-no-files-found: warn
