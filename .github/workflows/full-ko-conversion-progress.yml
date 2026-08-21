@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  convert-non3d:
+  convert-and-validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout MMORPG
@@ -32,40 +32,10 @@ jobs:
           mkdir -p artifacts
           python tools/full_game_inventory.py \
             --source unity/LegacySource/ko-assets-1298 \
-            --output artifacts/ko-1298-full-inventory.json
+            --output artifacts/ko-1298-full-inventory.json \
+            --fail-on-unclassified
 
-      - name: Inspect legacy texture header variants
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import struct
-
-          root = Path('unity/LegacySource/ko-assets-1298')
-          names = {
-              'itemicon_3_2041_01_1.dxt',
-              'itemicon_3_2041_01_2.dxt',
-              'itemicon_3_2041_01_3.dxt',
-              'itemicon_3_3031_01_4.dxt',
-          }
-          found = []
-          for path in root.rglob('*.dxt'):
-              if path.name.lower() not in names:
-                  continue
-              data = path.read_bytes()
-              first = data[:64]
-              ints = [struct.unpack_from('<I', first, offset)[0] for offset in range(0, min(48, len(first) - 3), 4)]
-              print('TEXTURE_HEADER', path.relative_to(root).as_posix())
-              print('SIZE', len(data))
-              print('HEX64', first.hex())
-              print('U32', ints)
-              found.append(path.name.lower())
-          missing = sorted(names - set(found))
-          print('FOUND', len(found), 'MISSING', missing)
-          if missing:
-              raise SystemExit(2)
-          PY
-
-      - name: Convert all deterministic non-3D assets
+      - name: Convert deterministic Android assets
         run: |
           python tools/convert_non3d_assets.py \
             --source unity/LegacySource/ko-assets-1298 \
@@ -73,6 +43,21 @@ jobs:
             --unity-assets unity/Assets \
             --vendor-root tools/vendor \
             --manifest artifacts/ko-1298-conversion-manifest.json
+
+      - name: Build byte-exact Android KO runtime pack
+        run: |
+          python tools/build_android_runtime_pack.py \
+            --source unity/LegacySource/ko-assets-1298 \
+            --inventory artifacts/ko-1298-full-inventory.json \
+            --unity-assets unity/Assets \
+            --output-manifest artifacts/ko-1298-runtime-pack.json
+
+      - name: Validate supported N3 formats across complete source tree
+        run: |
+          python tools/validate_n3_runtime.py \
+            --source unity/LegacySource/ko-assets-1298 \
+            --vendor-root tools/vendor \
+            --output artifacts/ko-1298-n3-validation.json
 
       - name: Convert original CharacterCreate UIF
         run: |
@@ -82,14 +67,13 @@ jobs:
             --discover-character-create \
             --output unity/Assets/Resources/LegacyUI/character_create.json
 
-      - name: Show strict final gate status
-        continue-on-error: true
+      - name: Strict whole-game conversion gate
         run: |
           python tools/full_game_gate.py \
             --inventory artifacts/ko-1298-full-inventory.json \
             --conversion artifacts/ko-1298-conversion-manifest.json
 
-      - name: Upload conversion reports
+      - name: Upload conversion evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -97,5 +81,8 @@ jobs:
           path: |
             artifacts/ko-1298-full-inventory.json
             artifacts/ko-1298-conversion-manifest.json
+            artifacts/ko-1298-runtime-pack.json
+            artifacts/ko-1298-n3-validation.json
             unity/Assets/Resources/LegacyUI/character_create.json
-          if-no-files-found: error
+            unity/Assets/StreamingAssets/KOConverted/texture-index.json
+          if-no-files-found: warn
