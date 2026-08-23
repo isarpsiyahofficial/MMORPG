@@ -79,8 +79,6 @@ void CureWorker() {
 
 void UpdateStateMarker() {
     if (!g_hwnd) return;
-    // Window property is intentionally used only as a deterministic observable
-    // state marker for automated Windows verification. It has no UI impact.
     SetPropW(g_hwnd, L"PPC_ACTIVE", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(g_active.load() ? 1 : 0)));
 }
 
@@ -105,35 +103,62 @@ void StopMacro() {
     if (g_hwnd) InvalidateRect(g_hwnd,nullptr,FALSE);
 }
 
-LRESULT CALLBACK KeyboardProc(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) {
-        auto* k = reinterpret_cast<KBDLLHOOKSTRUCT*>(lp);
-        const bool down = (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN);
-        if (down) {
-            const int vk = int(k->vkCode);
+bool IsKeyDown(int vk) {
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
 
-            // The program never generates TAB or Caps Lock itself. Handling
-            // these first also allows the Windows CI to exercise the exact
-            // low-level global hook path end-to-end.
-            if (vk == VK_TAB) { StartMacro(); return 1; }
-            if (vk == VK_CAPITAL) { StopMacro(); return 1; }
+bool IsReservedCureKey(int vk, const Settings& s) {
+    if (vk == VK_TAB || vk == VK_CAPITAL || vk == 'R') return true;
+    return vk == s.comboVk[0] || vk == s.comboVk[1] || vk == s.comboVk[2];
+}
 
-            if (!(k->flags & LLKHF_INJECTED)) {
-                if (g_captureCure.exchange(false)) {
+void InputWorker() {
+    std::array<bool, 256> previous{};
+    for (int vk=0; vk<256; ++vk) previous[vk] = IsKeyDown(vk);
+
+    ppc::StartStopLatch control;
+    control.prime(previous[VK_TAB], previous[VK_CAPITAL]);
+
+    while (!g_quit.load(std::memory_order_relaxed)) {
+        const bool tabDown = IsKeyDown(VK_TAB);
+        const bool capsDown = IsKeyDown(VK_CAPITAL);
+        const int action = control.update(tabDown, capsDown);
+        if (action > 0) StartMacro();
+        else if (action < 0) StopMacro();
+        previous[VK_TAB] = tabDown;
+        previous[VK_CAPITAL] = capsDown;
+
+        Settings s; { std::lock_guard<std::mutex> lk(g_settingsMutex); s = g_settings; }
+        bool capture = g_captureCure.load(std::memory_order_relaxed);
+        bool capturedThisPass = false;
+
+        for (int vk=VK_BACK; vk<=0xFE; ++vk) {
+            if (vk == VK_TAB || vk == VK_CAPITAL) continue;
+            const bool down = IsKeyDown(vk);
+            const bool rising = down && !previous[vk];
+            previous[vk] = down;
+            if (!rising) continue;
+
+            if (vk >= VK_F1 && vk <= VK_F8) g_currentBar.store(vk - VK_F1 + 1);
+
+            if (capture && !capturedThisPass) {
+                if (IsReservedCureKey(vk, s)) {
+                    PostMessageW(g_hwnd, WM_APP_CUREKEY, WPARAM(s.cureHotkey), 2);
+                } else if (g_captureCure.exchange(false)) {
                     { std::lock_guard<std::mutex> lk(g_settingsMutex); g_settings.cureHotkey = vk; }
                     PostMessageW(g_hwnd, WM_APP_CUREKEY, WPARAM(vk), 0);
-                    return 1;
                 }
-                if (vk >= VK_F1 && vk <= VK_F8) g_currentBar.store(vk - VK_F1 + 1);
-                Settings s; { std::lock_guard<std::mutex> lk(g_settingsMutex); s = g_settings; }
-                if (g_active.load() && s.cureEnabled && vk == s.cureHotkey) {
-                    std::thread(CureWorker).detach();
-                    return 1;
-                }
+                capturedThisPass = true;
+                capture = false;
+                continue;
+            }
+
+            if (g_active.load(std::memory_order_relaxed) && s.cureEnabled && vk == s.cureHotkey) {
+                std::thread(CureWorker).detach();
             }
         }
+        Sleep(1);
     }
-    return CallNextHookEx(g_hook, code, wp, lp);
 }
 
 std::unique_ptr<Bitmap> LoadImageResource(int id) {
