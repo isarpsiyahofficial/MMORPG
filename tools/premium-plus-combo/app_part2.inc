@@ -77,9 +77,17 @@ void CureWorker() {
     g_cureBusy.store(false);
 }
 
+void UpdateStateMarker() {
+    if (!g_hwnd) return;
+    // Window property is intentionally used only as a deterministic observable
+    // state marker for automated Windows verification. It has no UI impact.
+    SetPropW(g_hwnd, L"PPC_ACTIVE", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(g_active.load() ? 1 : 0)));
+}
+
 void UpdateStateTitle() {
     if (!g_hwnd) return;
     SetWindowTextW(g_hwnd, g_active.load() ? L"Premium Plus Combo|ACTIVE" : L"Premium Plus Combo|READY");
+    UpdateStateMarker();
 }
 
 void StartMacro() {
@@ -104,9 +112,9 @@ LRESULT CALLBACK KeyboardProc(int code, WPARAM wp, LPARAM lp) {
         if (down) {
             const int vk = int(k->vkCode);
 
-            // Start/stop are deliberately handled before the injected-key filter.
-            // The program never generates TAB or Caps Lock itself, and this also
-            // lets the Windows CI exercise the real global hook end-to-end.
+            // The program never generates TAB or Caps Lock itself. Handling
+            // these first also allows the Windows CI to exercise the exact
+            // low-level global hook path end-to-end.
             if (vk == VK_TAB) { StartMacro(); return 1; }
             if (vk == VK_CAPITAL) { StopMacro(); return 1; }
 
