@@ -24,10 +24,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if(p.y<58 && !PtIn(rcMin,p.x,p.y) && !PtIn(rcClose,p.x,p.y)) return HTCAPTION;
             return HTCLIENT;
         }
-        case WM_HOTKEY:
-            if ((int)wp == HOTKEY_START) { if (ApplyControls(true)) StartMacro(); return 0; }
-            if ((int)wp == HOTKEY_STOP) { StopMacro(); return 0; }
-            break;
         case WM_LBUTTONUP: {
             int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
             if(PtIn(rcClose,x,y)){ DestroyWindow(hwnd); return 0; }
@@ -50,7 +46,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case WM_APP_CUREKEY:
             SetWindowTextW(hCureKey,VkName((int)wp).c_str());
-            if (lp == 1) MessageBoxW(hwnd,L"TAB ve Caps Lock başlatma/durdurma için ayrılmıştır. Cure tuşu olarak başka bir tuş seçin.",L"Cure Tuşu",MB_OK|MB_ICONWARNING);
             InvalidateRect(hwnd,nullptr,FALSE);
             return 0;
         case WM_TIMER: if(wp==TIMER_UI){ InvalidateRect(hwnd,nullptr,FALSE); return 0; } break;
@@ -64,8 +59,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DESTROY:
             g_quit.store(true);
             StopMacro();
-            UnregisterHotKey(hwnd,HOTKEY_START);
-            UnregisterHotKey(hwnd,HOTKEY_STOP);
             SetEvent(g_wakeEvent);
             KillTimer(hwnd,TIMER_UI);
             PostQuitMessage(0);
@@ -115,16 +108,6 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int) {
     int sx=(GetSystemMetrics(SM_CXSCREEN)-W)/2, sy=(GetSystemMetrics(SM_CYSCREEN)-H)/2;
     g_hwnd=CreateWindowExW(WS_EX_APPWINDOW,L"PremiumPlusComboWindow",L"Premium Plus Combo|READY",WS_POPUP|WS_CLIPCHILDREN,sx,sy,W,H,nullptr,nullptr,hInst,nullptr);
     if(!g_hwnd) return 2;
-
-    const BOOL hkStart = RegisterHotKey(g_hwnd,HOTKEY_START,MOD_NOREPEAT,VK_TAB);
-    const BOOL hkStop = RegisterHotKey(g_hwnd,HOTKEY_STOP,MOD_NOREPEAT,VK_CAPITAL);
-    if(!hkStart || !hkStop){
-        if(hkStart) UnregisterHotKey(g_hwnd,HOTKEY_START);
-        if(hkStop) UnregisterHotKey(g_hwnd,HOTKEY_STOP);
-        MessageBoxW(g_hwnd,L"TAB veya Caps Lock global tuşu başka bir program tarafından kullanılıyor. Diğer programı kapatıp tekrar deneyin.",L"Premium Plus Combo",MB_OK|MB_ICONERROR);
-        DestroyWindow(g_hwnd);
-        return 6;
-    }
 
     g_hook=SetWindowsHookExW(WH_KEYBOARD_LL,KeyboardProc,hInst,0);
     if(!g_hook){
