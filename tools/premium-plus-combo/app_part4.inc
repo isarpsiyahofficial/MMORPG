@@ -23,6 +23,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 MessageBoxW(hwnd,L"Arayüz kontrolleri oluşturulamadı. Program başlatılmadı.",L"Premium Plus Combo",MB_OK|MB_ICONERROR);
                 return -1;
             }
+            SetPropW(hwnd,L"PPC_CONTROLS",reinterpret_cast<HANDLE>(static_cast<INT_PTR>(10)));
             SetTimer(hwnd,TIMER_UI,250,nullptr);
             return 0;
         case WM_NCHITTEST: {
@@ -73,6 +74,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_ERASEBKGND: return 1;
         case WM_PAINT: { PAINTSTRUCT ps{}; HDC dc=BeginPaint(hwnd,&ps); DrawUi(hwnd,dc); EndPaint(hwnd,&ps); return 0; }
         case WM_DESTROY:
+            RemovePropW(hwnd,L"PPC_CONTROLS");
+            RemovePropW(hwnd,L"PPC_ACTIVE");
             g_quit.store(true);
             StopMacro();
             SetEvent(g_wakeEvent);
