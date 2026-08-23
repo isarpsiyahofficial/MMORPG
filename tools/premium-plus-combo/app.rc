@@ -1,5 +1,4 @@
 #include "resource.h"
-IDI_APP ICON "assets/app.ico"
 IDR_KARUS RCDATA "assets/karus_rogue.jpg"
 IDR_HUMAN RCDATA "assets/human_rogue.jpg"
 1 24 "app.manifest"
