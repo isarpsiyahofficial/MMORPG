@@ -100,24 +100,28 @@ void StopMacro() {
 LRESULT CALLBACK KeyboardProc(int code, WPARAM wp, LPARAM lp) {
     if (code == HC_ACTION) {
         auto* k = reinterpret_cast<KBDLLHOOKSTRUCT*>(lp);
-        bool down = (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN);
-        if (!(k->flags & LLKHF_INJECTED) && down) {
-            int vk = int(k->vkCode);
-            if (g_captureCure.exchange(false)) {
-                if (vk == VK_TAB || vk == VK_CAPITAL) {
-                    Settings s; { std::lock_guard<std::mutex> lk(g_settingsMutex); s = g_settings; }
-                    PostMessageW(g_hwnd, WM_APP_CUREKEY, WPARAM(s.cureHotkey), 1);
+        const bool down = (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN);
+        if (down) {
+            const int vk = int(k->vkCode);
+
+            // Start/stop are deliberately handled before the injected-key filter.
+            // The program never generates TAB or Caps Lock itself, and this also
+            // lets the Windows CI exercise the real global hook end-to-end.
+            if (vk == VK_TAB) { StartMacro(); return 1; }
+            if (vk == VK_CAPITAL) { StopMacro(); return 1; }
+
+            if (!(k->flags & LLKHF_INJECTED)) {
+                if (g_captureCure.exchange(false)) {
+                    { std::lock_guard<std::mutex> lk(g_settingsMutex); g_settings.cureHotkey = vk; }
+                    PostMessageW(g_hwnd, WM_APP_CUREKEY, WPARAM(vk), 0);
                     return 1;
                 }
-                { std::lock_guard<std::mutex> lk(g_settingsMutex); g_settings.cureHotkey = vk; }
-                PostMessageW(g_hwnd, WM_APP_CUREKEY, WPARAM(vk), 0);
-                return 1;
-            }
-            if (vk >= VK_F1 && vk <= VK_F8) g_currentBar.store(vk - VK_F1 + 1);
-            Settings s; { std::lock_guard<std::mutex> lk(g_settingsMutex); s = g_settings; }
-            if (g_active.load() && s.cureEnabled && vk == s.cureHotkey) {
-                std::thread(CureWorker).detach();
-                return 1;
+                if (vk >= VK_F1 && vk <= VK_F8) g_currentBar.store(vk - VK_F1 + 1);
+                Settings s; { std::lock_guard<std::mutex> lk(g_settingsMutex); s = g_settings; }
+                if (g_active.load() && s.cureEnabled && vk == s.cureHotkey) {
+                    std::thread(CureWorker).detach();
+                    return 1;
+                }
             }
         }
     }
