@@ -67,11 +67,10 @@ jobs:
           Add-Type -AssemblyName System.Drawing
           Add-Type @"
           using System;
-          using System.Text;
           using System.Runtime.InteropServices;
           public static class Win32PpcTest {
               [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-              public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+              public static extern IntPtr GetProp(IntPtr hWnd, string lpString);
               [DllImport("user32.dll")]
               public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
               [DllImport("user32.dll")]
@@ -79,10 +78,8 @@ jobs:
           }
           "@
 
-          function Get-WindowTitle([IntPtr]$h) {
-              $sb = New-Object System.Text.StringBuilder 256
-              [void][Win32PpcTest]::GetWindowText($h, $sb, $sb.Capacity)
-              return $sb.ToString()
+          function Get-ActiveMarker([IntPtr]$h) {
+              return [Win32PpcTest]::GetProp($h, 'PPC_ACTIVE').ToInt64()
           }
           function Press-Key([byte]$vk) {
               [Win32PpcTest]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
@@ -100,20 +97,17 @@ jobs:
           }
           if ($handle -eq [IntPtr]::Zero) { throw 'Main window handle was not created' }
 
-          $title = Get-WindowTitle $handle
-          if ($title -ne 'Premium Plus Combo|READY') { throw "Program did not start inactive. Title=$title" }
+          if ((Get-ActiveMarker $handle) -ne 0) { throw 'Program did not start inactive' }
           "InitialInactive=PASS" | Add-Content build-info.txt
 
           Press-Key 0x09
           Start-Sleep -Milliseconds 500
-          $title = Get-WindowTitle $handle
-          if ($title -ne 'Premium Plus Combo|ACTIVE') { throw "TAB did not start the program. Title=$title" }
+          if ((Get-ActiveMarker $handle) -ne 1) { throw 'TAB did not start the program' }
           "TabStart=PASS" | Add-Content build-info.txt
 
           Press-Key 0x14
           Start-Sleep -Milliseconds 500
-          $title = Get-WindowTitle $handle
-          if ($title -ne 'Premium Plus Combo|READY') { throw "Caps Lock did not stop the program. Title=$title" }
+          if ((Get-ActiveMarker $handle) -ne 0) { throw 'Caps Lock did not stop the program' }
           "CapsStop=PASS" | Add-Content build-info.txt
 
           $bmp = New-Object System.Drawing.Bitmap 820,560
