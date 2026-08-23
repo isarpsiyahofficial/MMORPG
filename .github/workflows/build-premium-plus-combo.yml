@@ -6,6 +6,11 @@ on:
     paths:
       - 'tools/premium-plus-combo/**'
       - '.github/workflows/build-premium-plus-combo.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'tools/premium-plus-combo/**'
+      - '.github/workflows/build-premium-plus-combo.yml'
   workflow_dispatch:
 
 jobs:
