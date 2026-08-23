@@ -39,7 +39,7 @@ constexpr ULONG_PTR EXTRA_TAG = 0x5050434F4D424FULL;
 HWND g_hwnd{};
 HHOOK g_hook{};
 HBRUSH g_brushCream{};
-HFONT g_font{}, g_fontBold{}, g_fontSmall{};
+HFONT g_font{}, g_fontBold{};
 ULONG_PTR g_gdiplusToken{};
 std::unique_ptr<Bitmap> g_karus;
 std::unique_ptr<Bitmap> g_human;
@@ -59,7 +59,6 @@ std::mutex g_settingsMutex;
 HWND hSeq1{}, hSeq2{}, hSeq3{};
 HWND hRCheck{}, hRMax{}, hRTurbo{};
 HWND hCureCheck{}, hCureBar{}, hCureSlot{}, hCureKey{};
-HWND hStatus{};
 
 RECT rcStart{195,75,395,125};
 RECT rcStop{425,75,625,125};
@@ -100,7 +99,7 @@ std::wstring VkName(int vk) {
 
 int ParseVk(std::wstring s) {
     s.erase(std::remove_if(s.begin(), s.end(), [](wchar_t c){ return iswspace(c); }), s.end());
-    std::transform(s.begin(), s.end(), s.begin(), ::towupper);
+    std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c){ return static_cast<wchar_t>(towupper(c)); });
     if (s.size() == 1 && ((s[0] >= L'0' && s[0] <= L'9') || (s[0] >= L'A' && s[0] <= L'Z'))) return int(s[0]);
     if (s.size() >= 2 && s[0] == L'F') {
         int n = _wtoi(s.c_str()+1); if (n >= 1 && n <= 12) return VK_F1+n-1;
