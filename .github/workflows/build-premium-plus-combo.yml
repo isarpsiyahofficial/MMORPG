@@ -97,8 +97,8 @@ jobs:
           }
           "@
 
-          function Get-ActiveMarker([IntPtr]$h) {
-              return [Win32PpcTest]::GetProp($h, 'PPC_ACTIVE').ToInt64()
+          function Get-PropValue([IntPtr]$h, [string]$name) {
+              return [Win32PpcTest]::GetProp($h, $name).ToInt64()
           }
           function Click-Client([IntPtr]$h, [int]$x, [int]$y) {
               $packed = (($y -band 0xffff) -shl 16) -bor ($x -band 0xffff)
@@ -127,8 +127,11 @@ jobs:
           if ($handle -eq [IntPtr]::Zero) { throw 'Main window handle was not created' }
           Start-Sleep -Seconds 1
 
-          if ((Get-ActiveMarker $handle) -ne 0) { throw 'Program did not start inactive' }
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Program did not start inactive' }
           "InitialInactive=PASS" | Add-Content build-info.txt
+
+          if ((Get-PropValue $handle 'PPC_CONTROLS') -ne 10) { throw 'Application did not report ten initialized controls' }
+          "ControlInitialization=PASS" | Add-Content build-info.txt
 
           $children = [Win32PpcTest]::CountChildren($handle)
           $visibleChildren = [Win32PpcTest]::CountVisibleChildren($handle)
@@ -145,12 +148,12 @@ jobs:
 
           Click-Client $handle 295 100
           Start-Sleep -Milliseconds 300
-          if ((Get-ActiveMarker $handle) -ne 1) { throw 'Start button did not activate the program' }
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'Start button did not activate the program' }
           "StartButton=PASS" | Add-Content build-info.txt
 
           Click-Client $handle 525 100
           Start-Sleep -Milliseconds 300
-          if ((Get-ActiveMarker $handle) -ne 0) { throw 'Stop button did not stop the program' }
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Stop button did not stop the program' }
           "StopButton=PASS" | Add-Content build-info.txt
 
           Stop-Process -Id $p.Id -Force
