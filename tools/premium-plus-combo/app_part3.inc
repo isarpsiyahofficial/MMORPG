@@ -18,7 +18,7 @@ void DrawModeCard(Graphics& g, const RECT& rr, bool turbo, bool selected) {
     Color fill = selected ? (turbo?Color(255,109,21,18):Color(255,102,65,18)) : Color(250,247,234,211);
     Color txt = selected ? Color(255,255,231,158) : Color(255,66,42,21);
     Panel(g,r,fill,selected?Color(255,242,174,57):Color(255,173,128,48),10);
-    DrawTextG(g,turbo?L"⚡ Turbo Mod":L"⚡ Maximum Mod",r.X+12,r.Y+6,r.Width-42,30,18,true,txt);
+    DrawTextG(g,turbo?L"Turbo Mod":L"Maximum Mod",r.X+12,r.Y+6,r.Width-42,30,18,true,txt);
     DrawTextG(g,turbo?L"Minor Hızı: ~240/sn (her tuş)":L"Minor Hızı: ~120/sn (her tuş)",r.X+12,r.Y+40,r.Width-24,30,14,false,txt);
     DrawTextG(g,L"!",r.GetRight()-31,r.Y+8,22,22,14,true,selected?Color(255,255,202,71):Color(255,116,76,25),StringAlignmentCenter);
 }
@@ -71,20 +71,38 @@ void SyncControls() {
     SetWindowTextW(hCureKey,VkName(s.cureHotkey).c_str());
 }
 
-void MakeChildControls(HWND w) {
-    auto mkEdit=[&](int id,int x,int y,int ww,int hh,DWORD extra=0){ HWND h=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_BORDER|ES_CENTER|extra,x,y,ww,hh,w,(HMENU)(INT_PTR)id,nullptr,nullptr); SendMessage(h,WM_SETFONT,(WPARAM)g_font,TRUE); return h; };
-    auto mkCheck=[&](int id,const wchar_t* t,int x,int y,int ww,int hh){ HWND h=CreateWindowExW(0,L"BUTTON",t,WS_CHILD|WS_VISIBLE|BS_AUTOCHECKBOX,x,y,ww,hh,w,(HMENU)(INT_PTR)id,nullptr,nullptr); SendMessage(h,WM_SETFONT,(WPARAM)g_font,TRUE); return h; };
+bool MakeChildControls(HWND w) {
+    const HINSTANCE inst = GetModuleHandleW(nullptr);
+    auto mkEdit=[&](int id,int x,int y,int ww,int hh,DWORD extra=0){
+        HWND h=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|ES_CENTER|extra,x,y,ww,hh,w,(HMENU)(INT_PTR)id,inst,nullptr);
+        if(h) SendMessageW(h,WM_SETFONT,(WPARAM)g_font,TRUE);
+        return h;
+    };
+    auto mkCheck=[&](int id,const wchar_t* t,int x,int y,int ww,int hh){
+        HWND h=CreateWindowExW(0,L"BUTTON",t,WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,x,y,ww,hh,w,(HMENU)(INT_PTR)id,inst,nullptr);
+        if(h) SendMessageW(h,WM_SETFONT,(WPARAM)g_font,TRUE);
+        return h;
+    };
+
     hSeq1=mkEdit(1001,260,272,58,30); hSeq2=mkEdit(1002,335,272,58,30); hSeq3=mkEdit(1003,410,272,58,30);
-    SendMessage(hSeq1,EM_SETLIMITTEXT,5,0); SendMessage(hSeq2,EM_SETLIMITTEXT,5,0); SendMessage(hSeq3,EM_SETLIMITTEXT,5,0);
     hRCheck=mkCheck(1101,L"R Combo",205,338,90,24);
     hRMax=mkEdit(1102,395,335,54,28,ES_NUMBER); hRTurbo=mkEdit(1103,535,335,54,28,ES_NUMBER);
     hCureCheck=mkCheck(1201,L"Cure Al",205,408,85,24);
-    hCureBar=CreateWindowExW(0,L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST,318,405,72,180,w,(HMENU)1202,nullptr,nullptr);
-    hCureSlot=CreateWindowExW(0,L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST,430,405,58,180,w,(HMENU)1203,nullptr,nullptr);
-    hCureKey=CreateWindowExW(0,L"BUTTON",L"C",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,548,404,78,29,w,(HMENU)1204,nullptr,nullptr);
-    SendMessage(hCureBar,WM_SETFONT,(WPARAM)g_font,TRUE); SendMessage(hCureSlot,WM_SETFONT,(WPARAM)g_font,TRUE); SendMessage(hCureKey,WM_SETFONT,(WPARAM)g_fontBold,TRUE);
-    for(int i=1;i<=8;i++){ std::wstring f=L"F"+std::to_wstring(i); ComboBox_AddString(hCureBar,f.c_str()); std::wstring n=std::to_wstring(i); ComboBox_AddString(hCureSlot,n.c_str()); }
+    hCureBar=CreateWindowExW(0,L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,318,405,72,180,w,(HMENU)(INT_PTR)1202,inst,nullptr);
+    hCureSlot=CreateWindowExW(0,L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,430,405,58,180,w,(HMENU)(INT_PTR)1203,inst,nullptr);
+    hCureKey=CreateWindowExW(0,L"BUTTON",L"C",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,548,404,78,29,w,(HMENU)(INT_PTR)1204,inst,nullptr);
+
+    const std::array<HWND,10> controls{{hSeq1,hSeq2,hSeq3,hRCheck,hRMax,hRTurbo,hCureCheck,hCureBar,hCureSlot,hCureKey}};
+    for(HWND h : controls) if(!h) return false;
+
+    SendMessageW(hSeq1,EM_SETLIMITTEXT,5,0); SendMessageW(hSeq2,EM_SETLIMITTEXT,5,0); SendMessageW(hSeq3,EM_SETLIMITTEXT,5,0);
+    SendMessageW(hCureBar,WM_SETFONT,(WPARAM)g_font,TRUE); SendMessageW(hCureSlot,WM_SETFONT,(WPARAM)g_font,TRUE); SendMessageW(hCureKey,WM_SETFONT,(WPARAM)g_fontBold,TRUE);
+    for(int i=1;i<=8;i++){
+        std::wstring f=L"F"+std::to_wstring(i); ComboBox_AddString(hCureBar,f.c_str());
+        std::wstring n=std::to_wstring(i); ComboBox_AddString(hCureSlot,n.c_str());
+    }
     SyncControls();
+    return true;
 }
 
 void DrawUi(HWND, HDC hdc) {
@@ -103,8 +121,8 @@ void DrawUi(HWND, HDC hdc) {
     DrawTextG(g,L"KARUS",18,278,145,22,13,true,Color(255,126,21,18),StringAlignmentCenter);
     DrawTextG(g,L"HUMAN",657,278,145,22,13,true,Color(255,126,84,18),StringAlignmentCenter);
 
-    Button(g,rcStart,L"▶  Başlat  (TAB)",Color(255,125,78,22),Color(255,80,43,13),g_active.load());
-    Button(g,rcStop,L"■  Durdur  (Caps Lock)",Color(255,151,28,26),Color(255,91,13,18),!g_active.load());
+    Button(g,rcStart,L"Başlat  (TAB)",Color(255,125,78,22),Color(255,80,43,13),g_active.load());
+    Button(g,rcStop,L"Durdur  (Caps Lock)",Color(255,151,28,26),Color(255,91,13,18),!g_active.load());
 
     DrawTextG(g,L"Mod Seçimi",195,127,430,20,14,true,Color(255,82,49,20),StringAlignmentCenter);
     DrawModeCard(g,rcMax,false,g_mode.load()==Mode::Maximum);
