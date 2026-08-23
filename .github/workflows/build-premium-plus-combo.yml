@@ -59,8 +59,9 @@ jobs:
           "CoreTests=PASS" | Add-Content build-info.txt
           "StaticCRT=PASS" | Add-Content build-info.txt
           "UTF8Build=PASS" | Add-Content build-info.txt
+          "StartStopLatch=PASS" | Add-Content build-info.txt
 
-      - name: Windows initial-state hotkey and UI test
+      - name: Windows initial-state controls and UI test
         shell: pwsh
         run: |
           cd tools/premium-plus-combo
@@ -69,22 +70,34 @@ jobs:
           using System;
           using System.Runtime.InteropServices;
           public static class Win32PpcTest {
+              public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
               [DllImport("user32.dll", CharSet = CharSet.Unicode)]
               public static extern IntPtr GetProp(IntPtr hWnd, string lpString);
               [DllImport("user32.dll")]
-              public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
-              [DllImport("user32.dll")]
               public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
+              [DllImport("user32.dll")]
+              public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+              [DllImport("user32.dll")]
+              public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc callback, IntPtr lParam);
+              [DllImport("user32.dll")]
+              public static extern bool IsWindowVisible(IntPtr hWnd);
+              public static int CountVisibleChildren(IntPtr parent) {
+                  int count = 0;
+                  EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) {
+                      if (IsWindowVisible(h)) count++;
+                      return true;
+                  }, IntPtr.Zero);
+                  return count;
+              }
           }
           "@
 
           function Get-ActiveMarker([IntPtr]$h) {
               return [Win32PpcTest]::GetProp($h, 'PPC_ACTIVE').ToInt64()
           }
-          function Press-Key([byte]$vk) {
-              [Win32PpcTest]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
-              Start-Sleep -Milliseconds 40
-              [Win32PpcTest]::keybd_event($vk, 0, 2, [UIntPtr]::Zero)
+          function Click-Client([IntPtr]$h, [int]$x, [int]$y) {
+              $packed = (($y -band 0xffff) -shl 16) -bor ($x -band 0xffff)
+              [void][Win32PpcTest]::SendMessage($h, 0x0202, [IntPtr]::Zero, [IntPtr]$packed)
           }
 
           $p = Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
@@ -100,15 +113,19 @@ jobs:
           if ((Get-ActiveMarker $handle) -ne 0) { throw 'Program did not start inactive' }
           "InitialInactive=PASS" | Add-Content build-info.txt
 
-          Press-Key 0x09
-          Start-Sleep -Milliseconds 500
-          if ((Get-ActiveMarker $handle) -ne 1) { throw 'TAB did not start the program' }
-          "TabStart=PASS" | Add-Content build-info.txt
+          $visibleChildren = [Win32PpcTest]::CountVisibleChildren($handle)
+          if ($visibleChildren -lt 10) { throw "Expected all input controls to be visible; visible child count=$visibleChildren" }
+          "VisibleControls=PASS($visibleChildren)" | Add-Content build-info.txt
 
-          Press-Key 0x14
-          Start-Sleep -Milliseconds 500
-          if ((Get-ActiveMarker $handle) -ne 0) { throw 'Caps Lock did not stop the program' }
-          "CapsStop=PASS" | Add-Content build-info.txt
+          Click-Client $handle 295 100
+          Start-Sleep -Milliseconds 300
+          if ((Get-ActiveMarker $handle) -ne 1) { throw 'Start button did not activate the program' }
+          "StartButton=PASS" | Add-Content build-info.txt
+
+          Click-Client $handle 525 100
+          Start-Sleep -Milliseconds 300
+          if ((Get-ActiveMarker $handle) -ne 0) { throw 'Stop button did not stop the program' }
+          "StopButton=PASS" | Add-Content build-info.txt
 
           $bmp = New-Object System.Drawing.Bitmap 820,560
           $graphics = [System.Drawing.Graphics]::FromImage($bmp)
