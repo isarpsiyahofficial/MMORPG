@@ -13,19 +13,57 @@ on:
       - '.github/workflows/build-premium-plus-combo.yml'
   workflow_dispatch:
 
+concurrency:
+  group: premium-plus-combo-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-test:
     runs-on: windows-latest
+    timeout-minutes: 15
     defaults:
       run:
         shell: cmd
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact source HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact source HEAD
+        shell: pwsh
+        run: |
+          $expected = '${{ github.event.pull_request.head.sha || github.sha }}'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $expected) { throw "Source mismatch. expected=$expected actual=$actual" }
+          "Exact source verified: $actual"
 
       - name: Setup MSVC x64
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      - name: UTF-8 and Turkish text audit
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+          $paths = @('app_part1.inc','app_part2.inc','app_part3.inc','app_part4.inc','core.hpp','tests.cpp')
+          $all = ''
+          foreach ($path in $paths) {
+            try { $text = [System.IO.File]::ReadAllText((Resolve-Path $path), $utf8) }
+            catch { throw "Invalid UTF-8 in $path : $($_.Exception.Message)" }
+            $all += "`n" + $text
+          }
+          foreach ($bad in @('Ã','Â','Ä','Å','â€','�')) {
+            if ($all.Contains($bad)) { throw "Mojibake marker '$bad' found in source" }
+          }
+          foreach ($required in @('Başlat','Durdur','Giriş Dizisi','Ayarlarımı Kaydet','Çalışıyor','Tuşa bas','Cure Ayarları')) {
+            if (-not $all.Contains($required)) { throw "Required Turkish UI text missing: $required" }
+          }
+          'UTF8TurkishAudit=PASS' | Set-Content -Encoding ascii encoding-audit.txt
 
       - name: Core logic tests
         run: |
@@ -43,7 +81,7 @@ jobs:
           cd tools\premium-plus-combo
           cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
 
-      - name: Validate single-EXE runtime dependencies
+      - name: Validate portable runtime and build identity
         shell: pwsh
         run: |
           cd tools/premium-plus-combo
@@ -52,118 +90,219 @@ jobs:
           if ($deps -match 'VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt') {
             throw 'Unexpected external VC runtime dependency detected'
           }
+          $source = (git rev-parse HEAD).Trim()
           $hash = (Get-FileHash PremiumPlusCombo.exe -Algorithm SHA256).Hash
-          "SHA256=$hash" | Set-Content build-info.txt
+          "SourceSHA=$source" | Set-Content build-info.txt
+          "SHA256=$hash" | Add-Content build-info.txt
           "Size=$((Get-Item PremiumPlusCombo.exe).Length)" | Add-Content build-info.txt
           "Architecture=x64" | Add-Content build-info.txt
           "CoreTests=PASS" | Add-Content build-info.txt
           "StaticCRT=PASS" | Add-Content build-info.txt
-          "UTF8Build=PASS" | Add-Content build-info.txt
-          "StartStopLatch=PASS" | Add-Content build-info.txt
+          "UTF8TurkishAudit=PASS" | Add-Content build-info.txt
+          "BackgroundAssets=EmbeddedKarusHuman" | Add-Content build-info.txt
 
-      - name: Windows initial-state controls and UI test
+      - name: Windows full UI and function test
         shell: pwsh
         run: |
           cd tools/premium-plus-combo
           Add-Type -AssemblyName System.Drawing
           Add-Type @"
           using System;
+          using System.Text;
           using System.Runtime.InteropServices;
           public static class Win32PpcTest {
-              public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
               [DllImport("user32.dll", CharSet = CharSet.Unicode)]
               public static extern IntPtr GetProp(IntPtr hWnd, string lpString);
               [DllImport("user32.dll")]
-              public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
+              public static extern IntPtr GetDlgItem(IntPtr hWnd, int id);
+              [DllImport("user32.dll")]
+              public static extern bool IsWindowVisible(IntPtr hWnd);
+              [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+              public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
               [DllImport("user32.dll")]
               public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
               [DllImport("user32.dll")]
-              public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc callback, IntPtr lParam);
+              public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
               [DllImport("user32.dll")]
-              public static extern bool IsWindowVisible(IntPtr hWnd);
-              public static int CountChildren(IntPtr parent) {
-                  int count = 0;
-                  EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) { count++; return true; }, IntPtr.Zero);
-                  return count;
-              }
-              public static int CountVisibleChildren(IntPtr parent) {
-                  int count = 0;
-                  EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) {
-                      if (IsWindowVisible(h)) count++;
-                      return true;
-                  }, IntPtr.Zero);
-                  return count;
-              }
+              public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
+              [DllImport("user32.dll")]
+              public static extern bool SetForegroundWindow(IntPtr hWnd);
           }
           "@
 
           function Get-PropValue([IntPtr]$h, [string]$name) {
               return [Win32PpcTest]::GetProp($h, $name).ToInt64()
           }
+          function Get-Control([IntPtr]$h, [int]$id) {
+              return [Win32PpcTest]::GetDlgItem($h, $id)
+          }
+          function Get-Text([IntPtr]$h) {
+              $sb = New-Object System.Text.StringBuilder 128
+              [void][Win32PpcTest]::GetWindowText($h, $sb, $sb.Capacity)
+              return $sb.ToString()
+          }
           function Click-Client([IntPtr]$h, [int]$x, [int]$y) {
               $packed = (($y -band 0xffff) -shl 16) -bor ($x -band 0xffff)
               [void][Win32PpcTest]::SendMessage($h, 0x0202, [IntPtr]::Zero, [IntPtr]$packed)
           }
-          function Capture-Ui([IntPtr]$handle) {
-              $bmp = New-Object System.Drawing.Bitmap 820,560
+          function Press-Key([byte]$vk) {
+              [Win32PpcTest]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
+              Start-Sleep -Milliseconds 70
+              [Win32PpcTest]::keybd_event($vk, 0, 2, [UIntPtr]::Zero)
+              Start-Sleep -Milliseconds 90
+          }
+          function Capture-Ui([IntPtr]$handle, [string]$path) {
+              $bmp = New-Object System.Drawing.Bitmap 980,620
               $graphics = [System.Drawing.Graphics]::FromImage($bmp)
               $hdc = $graphics.GetHdc()
               $ok = [Win32PpcTest]::PrintWindow($handle, $hdc, 2)
               $graphics.ReleaseHdc($hdc)
               $graphics.Dispose()
               if (-not $ok) { $bmp.Dispose(); throw 'PrintWindow failed' }
-              $bmp.Save((Join-Path (Get-Location) 'ui-smoke.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+              $bmp.Save((Join-Path (Get-Location) $path), [System.Drawing.Imaging.ImageFormat]::Png)
               $bmp.Dispose()
           }
 
           $p = Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
           $handle = [IntPtr]::Zero
-          for ($i=0; $i -lt 50; $i++) {
+          for ($i = 0; $i -lt 80; $i++) {
               Start-Sleep -Milliseconds 100
               $p.Refresh()
               if ($p.HasExited) { throw "PremiumPlusCombo.exe exited during startup with code $($p.ExitCode)" }
               if ($p.MainWindowHandle -ne 0) { $handle = [IntPtr]$p.MainWindowHandle; break }
           }
           if ($handle -eq [IntPtr]::Zero) { throw 'Main window handle was not created' }
-          Start-Sleep -Seconds 1
+          [void][Win32PpcTest]::SetForegroundWindow($handle)
+          Start-Sleep -Milliseconds 700
 
           if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Program did not start inactive' }
-          "InitialInactive=PASS" | Add-Content build-info.txt
-
+          if ((Get-PropValue $handle 'PPC_MODE') -ne 0) { throw 'Program did not start in Maximum mode' }
           if ((Get-PropValue $handle 'PPC_CONTROLS') -ne 10) { throw 'Application did not report ten initialized controls' }
-          "ControlInitialization=PASS" | Add-Content build-info.txt
+          "InitialInactive=PASS" | Add-Content build-info.txt
+          "InitialMaximumMode=PASS" | Add-Content build-info.txt
 
-          $children = [Win32PpcTest]::CountChildren($handle)
-          $visibleChildren = [Win32PpcTest]::CountVisibleChildren($handle)
-          "ChildWindows=$children" | Add-Content build-info.txt
-          "VisibleChildWindows=$visibleChildren" | Add-Content build-info.txt
+          $ids = @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204)
+          foreach ($id in $ids) {
+              $c = Get-Control $handle $id
+              if ($c -eq [IntPtr]::Zero) { throw "Missing control id=$id" }
+              if (-not [Win32PpcTest]::IsWindowVisible($c)) { throw "Hidden control id=$id" }
+          }
+          if ((Get-Text (Get-Control $handle 1001)) -ne '8') { throw 'Sequence key 1 is not 8' }
+          if ((Get-Text (Get-Control $handle 1002)) -ne '9') { throw 'Sequence key 2 is not 9' }
+          if ((Get-Text (Get-Control $handle 1003)) -ne '0') { throw 'Sequence key 3 is not 0' }
+          if ((Get-Text (Get-Control $handle 1204)) -ne 'C') { throw 'Default Cure key is not C' }
+          if ([Win32PpcTest]::SendMessage((Get-Control $handle 1101), 0x00F0, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -ne 1) { throw 'R Combo is not enabled by default' }
+          if ([Win32PpcTest]::SendMessage((Get-Control $handle 1201), 0x00F0, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -ne 1) { throw 'Cure is not enabled by default' }
+          if ([Win32PpcTest]::SendMessage((Get-Control $handle 1202), 0x0147, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -ne 1) { throw 'Default Cure bar is not F2' }
+          if ([Win32PpcTest]::SendMessage((Get-Control $handle 1203), 0x0147, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -ne 5) { throw 'Default Cure slot is not 6' }
+          "VisibleControls=PASS(10/10)" | Add-Content build-info.txt
+          "DefaultSettings=PASS" | Add-Content build-info.txt
 
-          Capture-Ui $handle
-          if ((Get-Item ui-smoke.png).Length -lt 10000) { throw 'UI screenshot is unexpectedly small' }
-          "UIScreenshot=PASS" | Add-Content build-info.txt
+          Capture-Ui $handle 'ui-initial.png'
+          if ((Get-Item ui-initial.png).Length -lt 20000) { throw 'Initial UI screenshot is unexpectedly small' }
 
-          if ($children -lt 10) { throw "Expected all input controls to exist; child count=$children" }
-          if ($visibleChildren -lt 10) { throw "Expected all input controls to be visible; visible child count=$visibleChildren" }
-          "VisibleControls=PASS($visibleChildren)" | Add-Content build-info.txt
-
-          Click-Client $handle 295 100
-          Start-Sleep -Milliseconds 300
+          # Real Start button and worker output.
+          Click-Client $handle 392 95
+          Start-Sleep -Milliseconds 600
           if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'Start button did not activate the program' }
+          $combo = Get-PropValue $handle 'PPC_COMBO_BURSTS'
+          $r = Get-PropValue $handle 'PPC_R_PRESSES'
+          if ($combo -lt 10) { throw "Combo worker did not produce output; bursts=$combo" }
+          if ($r -lt 2) { throw "R worker did not produce output; presses=$r" }
           "StartButton=PASS" | Add-Content build-info.txt
+          "ComboWorker=PASS($combo)" | Add-Content build-info.txt
+          "RWorker=PASS($r)" | Add-Content build-info.txt
 
-          Click-Client $handle 525 100
+          # Cure key must trigger and R must pause for about two seconds, then resume.
+          Press-Key 0x43
+          Start-Sleep -Milliseconds 180
+          if ((Get-PropValue $handle 'PPC_CURE_RUNS') -lt 1) { throw 'Cure hotkey C did not trigger Cure worker' }
+          Start-Sleep -Milliseconds 180
+          $r1 = Get-PropValue $handle 'PPC_R_PRESSES'
+          Start-Sleep -Milliseconds 500
+          $r2 = Get-PropValue $handle 'PPC_R_PRESSES'
+          if (($r2 - $r1) -gt 1) { throw "R did not pause during Cure; delta=$($r2-$r1)" }
+          Start-Sleep -Milliseconds 1450
+          $r3 = Get-PropValue $handle 'PPC_R_PRESSES'
+          Start-Sleep -Milliseconds 350
+          $r4 = Get-PropValue $handle 'PPC_R_PRESSES'
+          if ($r4 -le $r3) { throw 'R did not resume after Cure pause' }
+          "CureHotkey=PASS" | Add-Content build-info.txt
+          "CureRPauseResume=PASS" | Add-Content build-info.txt
+
+          # Real Stop button must halt output, not just change the label.
+          Click-Client $handle 592 95
           Start-Sleep -Milliseconds 300
           if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Stop button did not stop the program' }
+          $stoppedCombo1 = Get-PropValue $handle 'PPC_COMBO_BURSTS'
+          $stoppedR1 = Get-PropValue $handle 'PPC_R_PRESSES'
+          Start-Sleep -Milliseconds 350
+          $stoppedCombo2 = Get-PropValue $handle 'PPC_COMBO_BURSTS'
+          $stoppedR2 = Get-PropValue $handle 'PPC_R_PRESSES'
+          if ($stoppedCombo2 -ne $stoppedCombo1 -or $stoppedR2 -ne $stoppedR1) {
+              throw "Workers continued after Stop: combo $stoppedCombo1->$stoppedCombo2, R $stoppedR1->$stoppedR2"
+          }
           "StopButton=PASS" | Add-Content build-info.txt
+          "StopHaltsWorkers=PASS" | Add-Content build-info.txt
+
+          # When R Combo is disabled, Cure is not allowed to turn R back on.
+          [void][Win32PpcTest]::SendMessage((Get-Control $handle 1101), 0x00F1, [IntPtr]1, [IntPtr]::Zero)
+          Click-Client $handle 392 95
+          Start-Sleep -Milliseconds 450
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'Program did not start with R disabled' }
+          if ((Get-PropValue $handle 'PPC_R_PRESSES') -ne 0) { throw 'R fired while R Combo checkbox was disabled' }
+          Press-Key 0x43
+          Start-Sleep -Milliseconds 250
+          if ((Get-PropValue $handle 'PPC_CURE_RUNS') -lt 1) { throw 'Cure did not run while R Combo was disabled' }
+          Start-Sleep -Milliseconds 500
+          if ((Get-PropValue $handle 'PPC_R_PRESSES') -ne 0) { throw 'Cure incorrectly enabled R while R Combo was disabled' }
+          Click-Client $handle 592 95
+          Start-Sleep -Milliseconds 250
+          [void][Win32PpcTest]::SendMessage((Get-Control $handle 1101), 0x00F1, [IntPtr]1, [IntPtr]::Zero)
+          "CureRespectsRDisabled=PASS" | Add-Content build-info.txt
+
+          # Global TAB/Caps Lock controls must work outside the drawn buttons.
+          Press-Key 0x09
+          Start-Sleep -Milliseconds 450
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'TAB global start did not activate the program' }
+          Press-Key 0x14
+          Start-Sleep -Milliseconds 450
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Caps Lock global stop did not stop the program' }
+          "TabGlobalStart=PASS" | Add-Content build-info.txt
+          "CapsGlobalStop=PASS" | Add-Content build-info.txt
+
+          # Mode buttons must be real and deterministic.
+          Click-Client $handle 605 182
+          Start-Sleep -Milliseconds 180
+          if ((Get-PropValue $handle 'PPC_MODE') -ne 1) { throw 'Turbo mode button did not select Turbo' }
+          Click-Client $handle 380 182
+          Start-Sleep -Milliseconds 180
+          if ((Get-PropValue $handle 'PPC_MODE') -ne 0) { throw 'Maximum mode button did not restore Maximum' }
+          "ModeButtons=PASS" | Add-Content build-info.txt
+
+          Capture-Ui $handle 'ui-smoke.png'
+          if ((Get-Item ui-smoke.png).Length -lt 20000) { throw 'Final UI screenshot is unexpectedly small' }
+          "UIScreenshot=PASS" | Add-Content build-info.txt
 
           Stop-Process -Id $p.Id -Force
           "RuntimeSmoke=PASS" | Add-Content build-info.txt
 
-      - name: Upload tested release and UI diagnostics
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PremiumPlusCombo-Windows-x64
+          name: PremiumPlusCombo-Diagnostics
+          path: |
+            tools/premium-plus-combo/build-info.txt
+            tools/premium-plus-combo/dependencies.txt
+            tools/premium-plus-combo/ui-initial.png
+            tools/premium-plus-combo/ui-smoke.png
+          if-no-files-found: warn
+
+      - name: Upload tested release
+        uses: actions/upload-artifact@v4
+        with:
+          name: PremiumPlusCombo-Windows-x64-FINAL
           path: |
             tools/premium-plus-combo/PremiumPlusCombo.exe
             tools/premium-plus-combo/build-info.txt
