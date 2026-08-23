@@ -59,6 +59,19 @@ jobs:
           "CoreTests=PASS" | Add-Content build-info.txt
           "StaticCRT=PASS" | Add-Content build-info.txt
 
+      - name: Windows runtime smoke test
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $p = Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
+          Start-Sleep -Seconds 3
+          $p.Refresh()
+          if ($p.HasExited) {
+            throw "PremiumPlusCombo.exe exited during runtime smoke test with code $($p.ExitCode)"
+          }
+          Stop-Process -Id $p.Id -Force
+          "RuntimeSmoke=PASS" | Add-Content build-info.txt
+
       - name: Upload tested release
         uses: actions/upload-artifact@v4
         with:
