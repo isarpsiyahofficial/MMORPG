@@ -9,7 +9,7 @@
     DrawTextG(g,L"Cure alınırken R Combo 2 saniye durur; R kapalıysa program R'yi açmaz.",208,438,405,27,11,false,Color(255,94,57,31),StringAlignmentCenter);
 
     Button(g,rcSave,L"Ayarlarımı Kaydet",Color(255,134,29,22),Color(255,83,13,16),false);
-    std::wstring st = g_active.load()?L"● Çalışıyor":L"● Hazır";
+    std::wstring st = g_active.load()?L"Çalışıyor":L"Hazır";
     DrawTextG(g,st,24,526,140,25,14,true,g_active.load()?Color(255,33,119,43):Color(255,88,73,47));
     DrawTextG(g,g_mode.load()==Mode::Turbo?L"Mod: Turbo":L"Mod: Maximum",340,526,140,25,13,true,Color(255,98,48,18),StringAlignmentCenter);
     Settings s; { std::lock_guard<std::mutex> lk(g_settingsMutex); s=g_settings; }
@@ -24,6 +24,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if(p.y<58 && !PtIn(rcMin,p.x,p.y) && !PtIn(rcClose,p.x,p.y)) return HTCAPTION;
             return HTCLIENT;
         }
+        case WM_HOTKEY:
+            if ((int)wp == HOTKEY_START) { if (ApplyControls(true)) StartMacro(); return 0; }
+            if ((int)wp == HOTKEY_STOP) { StopMacro(); return 0; }
+            break;
         case WM_LBUTTONUP: {
             int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
             if(PtIn(rcClose,x,y)){ DestroyWindow(hwnd); return 0; }
@@ -36,7 +40,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if(PtIn(rcMax,x,y)){ g_mode.store(Mode::Maximum); InvalidateRect(hwnd,nullptr,FALSE); return 0; }
             if(PtIn(rcTurbo,x,y)){ g_mode.store(Mode::Turbo); InvalidateRect(hwnd,nullptr,FALSE); return 0; }
             if(PtIn(rcSave,x,y)){
-                if(ApplyControls(true)){ SaveRegistry(); MessageBoxW(hwnd,L"Ayarlar kaydedildi. Bir sonraki açılışta giriş dizisi, R Combo ve Cure ayarları otomatik yüklenir. Program her açılışta Maximum Mod ile başlar.",L"Premium Plus Combo",MB_OK|MB_ICONINFORMATION); }
+                if(ApplyControls(true)){ SaveRegistry(); MessageBoxW(hwnd,L"Ayarlar kaydedildi. Bir sonraki açılışta giriş dizisi, R Combo ve Cure ayarları yüklenir. Program her açılışta kapalı ve Maximum Mod hazır durumda başlar.",L"Premium Plus Combo",MB_OK|MB_ICONINFORMATION); }
                 return 0;
             }
             break;
@@ -44,15 +48,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_COMMAND:
             if(LOWORD(wp)==1204 && HIWORD(wp)==BN_CLICKED){ g_captureCure.store(true); SetWindowTextW(hCureKey,L"Tuşa bas..."); return 0; }
             break;
-        case WM_APP_CUREKEY: SetWindowTextW(hCureKey,VkName((int)wp).c_str()); InvalidateRect(hwnd,nullptr,FALSE); return 0;
+        case WM_APP_CUREKEY:
+            SetWindowTextW(hCureKey,VkName((int)wp).c_str());
+            if (lp == 1) MessageBoxW(hwnd,L"TAB ve Caps Lock başlatma/durdurma için ayrılmıştır. Cure tuşu olarak başka bir tuş seçin.",L"Cure Tuşu",MB_OK|MB_ICONWARNING);
+            InvalidateRect(hwnd,nullptr,FALSE);
+            return 0;
         case WM_TIMER: if(wp==TIMER_UI){ InvalidateRect(hwnd,nullptr,FALSE); return 0; } break;
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORBTN: {
             HDC dc=(HDC)wp; SetBkColor(dc,RGB(245,235,214)); SetTextColor(dc,RGB(70,42,22)); return (LRESULT)g_brushCream;
         }
+        case WM_ERASEBKGND: return 1;
         case WM_PAINT: { PAINTSTRUCT ps{}; HDC dc=BeginPaint(hwnd,&ps); DrawUi(hwnd,dc); EndPaint(hwnd,&ps); return 0; }
-        case WM_DESTROY: g_quit.store(true); g_active.store(false); SetEvent(g_wakeEvent); KillTimer(hwnd,TIMER_UI); PostQuitMessage(0); return 0;
+        case WM_DESTROY:
+            g_quit.store(true);
+            StopMacro();
+            UnregisterHotKey(hwnd,HOTKEY_START);
+            UnregisterHotKey(hwnd,HOTKEY_STOP);
+            SetEvent(g_wakeEvent);
+            KillTimer(hwnd,TIMER_UI);
+            PostQuitMessage(0);
+            return 0;
     }
     return DefWindowProcW(hwnd,msg,wp,lp);
 }
@@ -65,25 +82,78 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int) {
     g_brushCream=CreateSolidBrush(RGB(245,235,214));
     g_font=CreateFontW(-16,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,TURKISH_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
     g_fontBold=CreateFontW(-16,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,TURKISH_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
-    LoadRegistry();
-    g_karus=LoadPngResource(IDR_KARUS); g_human=LoadPngResource(IDR_HUMAN);
-    g_wakeEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
 
-    WNDCLASSEXW wc{sizeof(wc)}; wc.style=CS_HREDRAW|CS_VREDRAW; wc.lpfnWndProc=WndProc; wc.hInstance=hInst; wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION); wc.hCursor=LoadCursorW(nullptr,IDC_ARROW); wc.lpszClassName=L"PremiumPlusComboWindow";
+    g_active.store(false);
+    g_quit.store(false);
+    g_mode.store(Mode::Maximum);
+    g_rSuppressUntil.store(0);
+    LoadRegistry();
+    g_karus=LoadImageResource(IDR_KARUS);
+    g_human=LoadImageResource(IDR_HUMAN);
+    if (!g_karus || !g_human) {
+        MessageBoxW(nullptr,L"Gömülü Rogue görselleri yüklenemedi. Program başlatılmadı.",L"Premium Plus Combo",MB_OK|MB_ICONERROR);
+        if(g_gdiplusToken) GdiplusShutdown(g_gdiplusToken);
+        timeEndPeriod(1);
+        return 4;
+    }
+
+    g_wakeEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    if (!g_wakeEvent) {
+        MessageBoxW(nullptr,L"Çalışma motoru başlatılamadı.",L"Premium Plus Combo",MB_OK|MB_ICONERROR);
+        return 5;
+    }
+
+    WNDCLASSEXW wc{sizeof(wc)};
+    wc.style=CS_HREDRAW|CS_VREDRAW;
+    wc.lpfnWndProc=WndProc;
+    wc.hInstance=hInst;
+    wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION);
+    wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+    wc.lpszClassName=L"PremiumPlusComboWindow";
     RegisterClassExW(&wc);
+
     int sx=(GetSystemMetrics(SM_CXSCREEN)-W)/2, sy=(GetSystemMetrics(SM_CYSCREEN)-H)/2;
-    g_hwnd=CreateWindowExW(WS_EX_APPWINDOW,L"PremiumPlusComboWindow",L"Premium Plus Combo",WS_POPUP,sx,sy,W,H,nullptr,nullptr,hInst,nullptr);
+    g_hwnd=CreateWindowExW(WS_EX_APPWINDOW,L"PremiumPlusComboWindow",L"Premium Plus Combo|READY",WS_POPUP|WS_CLIPCHILDREN,sx,sy,W,H,nullptr,nullptr,hInst,nullptr);
     if(!g_hwnd) return 2;
+
+    const BOOL hkStart = RegisterHotKey(g_hwnd,HOTKEY_START,MOD_NOREPEAT,VK_TAB);
+    const BOOL hkStop = RegisterHotKey(g_hwnd,HOTKEY_STOP,MOD_NOREPEAT,VK_CAPITAL);
+    if(!hkStart || !hkStop){
+        if(hkStart) UnregisterHotKey(g_hwnd,HOTKEY_START);
+        if(hkStop) UnregisterHotKey(g_hwnd,HOTKEY_STOP);
+        MessageBoxW(g_hwnd,L"TAB veya Caps Lock global tuşu başka bir program tarafından kullanılıyor. Diğer programı kapatıp tekrar deneyin.",L"Premium Plus Combo",MB_OK|MB_ICONERROR);
+        DestroyWindow(g_hwnd);
+        return 6;
+    }
+
     g_hook=SetWindowsHookExW(WH_KEYBOARD_LL,KeyboardProc,hInst,0);
-    if(!g_hook){ MessageBoxW(g_hwnd,L"Global klavye dinleyicisi başlatılamadı.",L"Premium Plus Combo",MB_OK|MB_ICONERROR); return 3; }
+    if(!g_hook){
+        MessageBoxW(g_hwnd,L"Global klavye dinleyicisi başlatılamadı.",L"Premium Plus Combo",MB_OK|MB_ICONERROR);
+        DestroyWindow(g_hwnd);
+        return 3;
+    }
 
     std::thread combo(ComboWorker), rworker(RWorker);
-    ShowWindow(g_hwnd,SW_SHOW); UpdateWindow(g_hwnd);
-    MSG m{}; while(GetMessageW(&m,nullptr,0,0)>0){ TranslateMessage(&m); DispatchMessageW(&m); }
-    g_quit.store(true); g_active.store(false); SetEvent(g_wakeEvent);
-    if(combo.joinable()) combo.join(); if(rworker.joinable()) rworker.join();
-    if(g_hook) UnhookWindowsHookEx(g_hook); if(g_wakeEvent) CloseHandle(g_wakeEvent);
-    if(g_font) DeleteObject(g_font); if(g_fontBold) DeleteObject(g_fontBold); if(g_brushCream) DeleteObject(g_brushCream);
-    g_karus.reset(); g_human.reset(); if(g_gdiplusToken) GdiplusShutdown(g_gdiplusToken); timeEndPeriod(1);
+    ShowWindow(g_hwnd,SW_SHOW);
+    UpdateWindow(g_hwnd);
+    UpdateStateTitle();
+
+    MSG m{};
+    while(GetMessageW(&m,nullptr,0,0)>0){ TranslateMessage(&m); DispatchMessageW(&m); }
+
+    g_quit.store(true);
+    g_active.store(false);
+    SetEvent(g_wakeEvent);
+    if(combo.joinable()) combo.join();
+    if(rworker.joinable()) rworker.join();
+    if(g_hook) UnhookWindowsHookEx(g_hook);
+    if(g_wakeEvent) CloseHandle(g_wakeEvent);
+    if(g_font) DeleteObject(g_font);
+    if(g_fontBold) DeleteObject(g_fontBold);
+    if(g_brushCream) DeleteObject(g_brushCream);
+    g_karus.reset();
+    g_human.reset();
+    if(g_gdiplusToken) GdiplusShutdown(g_gdiplusToken);
+    timeEndPeriod(1);
     return 0;
 }
