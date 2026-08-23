@@ -23,6 +23,17 @@ void DrawModeCard(Graphics& g, const RECT& rr, bool turbo, bool selected) {
     DrawTextG(g,L"!",r.GetRight()-31,r.Y+8,22,22,14,true,selected?Color(255,255,202,71):Color(255,116,76,25),StringAlignmentCenter);
 }
 
+void NormalizeCureHotkey(Settings& s) {
+    auto reserved=[&](int vk){
+        return vk==VK_TAB || vk==VK_CAPITAL || vk=='R' || vk==s.comboVk[0] || vk==s.comboVk[1] || vk==s.comboVk[2];
+    };
+    if (!reserved(s.cureHotkey)) return;
+    for (int candidate : {'C','V','B','N','M','X','Z','Q','E','T','Y'}) {
+        if (!reserved(candidate)) { s.cureHotkey=candidate; return; }
+    }
+    s.cureHotkey=VK_F12;
+}
+
 void SaveRegistry() {
     Settings s; { std::lock_guard<std::mutex> lk(g_settingsMutex); s = g_settings; }
     HKEY key{}; if (RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\PremiumPlusCombo",0,nullptr,0,KEY_WRITE,nullptr,&key,nullptr)!=ERROR_SUCCESS) return;
@@ -42,7 +53,7 @@ void LoadRegistry() {
         s.cureEnabled=rd(L"CureEnabled",1)!=0; s.cureBar=rd(L"CureBar",2); s.cureSlot=rd(L"CureSlot",6); s.cureHotkey=rd(L"CureHotkey",'C');
         RegCloseKey(key);
     }
-    s = ppc::sanitize(s); std::lock_guard<std::mutex> lk(g_settingsMutex); g_settings=s;
+    s = ppc::sanitize(s); NormalizeCureHotkey(s); std::lock_guard<std::mutex> lk(g_settingsMutex); g_settings=s;
 }
 
 std::wstring GetText(HWND h) { wchar_t b[64]{}; GetWindowTextW(h,b,64); return b; }
@@ -56,8 +67,14 @@ bool ApplyControls(bool showError) {
     s.rRateMaximum=std::clamp(GetInt(hRMax,25),1,100); s.rRateTurbo=std::clamp(GetInt(hRTurbo,40),1,100);
     s.cureEnabled=Button_GetCheck(hCureCheck)==BST_CHECKED;
     s.cureBar=ComboBox_GetCurSel(hCureBar)+1; s.cureSlot=ComboBox_GetCurSel(hCureSlot)+1;
-    s=ppc::sanitize(s); { std::lock_guard<std::mutex> lk(g_settingsMutex); g_settings=s; }
+    s=ppc::sanitize(s);
+    const int oldCure = s.cureHotkey; NormalizeCureHotkey(s);
+    if (showError && oldCure != s.cureHotkey) {
+        MessageBoxW(g_hwnd,L"Seçili Cure tuşu giriş dizisi veya R Combo ile çakıştığı için güvenli bir tuşa taşındı.",L"Cure Tuşu",MB_OK|MB_ICONINFORMATION);
+    }
+    { std::lock_guard<std::mutex> lk(g_settingsMutex); g_settings=s; }
     SetWindowTextW(hRMax,std::to_wstring(s.rRateMaximum).c_str()); SetWindowTextW(hRTurbo,std::to_wstring(s.rRateTurbo).c_str());
+    SetWindowTextW(hCureKey,VkName(s.cureHotkey).c_str());
     return true;
 }
 
