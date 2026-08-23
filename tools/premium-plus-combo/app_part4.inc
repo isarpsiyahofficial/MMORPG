@@ -42,10 +42,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
         case WM_COMMAND:
-            if(LOWORD(wp)==1204 && HIWORD(wp)==BN_CLICKED){ g_captureCure.store(true); SetWindowTextW(hCureKey,L"Tuşa bas..."); return 0; }
+            if(LOWORD(wp)==1204 && HIWORD(wp)==BN_CLICKED){
+                StopMacro();
+                g_captureCure.store(true);
+                SetWindowTextW(hCureKey,L"Tuşa bas...");
+                return 0;
+            }
             break;
         case WM_APP_CUREKEY:
-            SetWindowTextW(hCureKey,VkName((int)wp).c_str());
+            if (lp == 2) {
+                MessageBoxW(hwnd,L"Bu tuş giriş dizisi, R Combo veya başlat/durdur kontrolü tarafından kullanılıyor. Cure için farklı bir tuş seçin.",L"Cure Tuşu",MB_OK|MB_ICONWARNING);
+                SetWindowTextW(hCureKey,L"Tuşa bas...");
+            } else {
+                SetWindowTextW(hCureKey,VkName((int)wp).c_str());
+            }
             InvalidateRect(hwnd,nullptr,FALSE);
             return 0;
         case WM_TIMER: if(wp==TIMER_UI){ InvalidateRect(hwnd,nullptr,FALSE); return 0; } break;
@@ -109,14 +119,7 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int) {
     g_hwnd=CreateWindowExW(WS_EX_APPWINDOW,L"PremiumPlusComboWindow",L"Premium Plus Combo|READY",WS_POPUP|WS_CLIPCHILDREN,sx,sy,W,H,nullptr,nullptr,hInst,nullptr);
     if(!g_hwnd) return 2;
 
-    g_hook=SetWindowsHookExW(WH_KEYBOARD_LL,KeyboardProc,hInst,0);
-    if(!g_hook){
-        MessageBoxW(g_hwnd,L"Global klavye dinleyicisi başlatılamadı.",L"Premium Plus Combo",MB_OK|MB_ICONERROR);
-        DestroyWindow(g_hwnd);
-        return 3;
-    }
-
-    std::thread combo(ComboWorker), rworker(RWorker);
+    std::thread combo(ComboWorker), rworker(RWorker), input(InputWorker);
     ShowWindow(g_hwnd,SW_SHOW);
     UpdateWindow(g_hwnd);
     UpdateStateTitle();
@@ -129,7 +132,7 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int) {
     SetEvent(g_wakeEvent);
     if(combo.joinable()) combo.join();
     if(rworker.joinable()) rworker.join();
-    if(g_hook) UnhookWindowsHookEx(g_hook);
+    if(input.joinable()) input.join();
     if(g_wakeEvent) CloseHandle(g_wakeEvent);
     if(g_font) DeleteObject(g_font);
     if(g_fontBold) DeleteObject(g_fontBold);
