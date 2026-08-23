@@ -55,4 +55,43 @@ inline bool rMayFire(bool active, bool rEnabled, std::int64_t nowTicks, const Cu
     return active && rEnabled && nowTicks >= gate.suppressUntilTicks;
 }
 
+struct RisingEdge {
+    bool previous{false};
+
+    void prime(bool currentlyDown) noexcept {
+        previous = currentlyDown;
+    }
+
+    bool update(bool currentlyDown) noexcept {
+        const bool rising = currentlyDown && !previous;
+        previous = currentlyDown;
+        return rising;
+    }
+};
+
+struct StartStopLatch {
+    RisingEdge tab;
+    RisingEdge caps;
+    bool armed{false};
+
+    void prime(bool tabDown, bool capsDown) noexcept {
+        tab.prime(tabDown);
+        caps.prime(capsDown);
+        armed = !tabDown && !capsDown;
+    }
+
+    // Returns +1 for start, -1 for stop, 0 for no action.
+    int update(bool tabDown, bool capsDown) noexcept {
+        const bool tabRise = tab.update(tabDown);
+        const bool capsRise = caps.update(capsDown);
+        if (!armed) {
+            if (!tabDown && !capsDown) armed = true;
+            return 0;
+        }
+        if (capsRise) return -1; // stop always has priority
+        if (tabRise) return 1;
+        return 0;
+    }
+};
+
 } // namespace ppc
