@@ -32,6 +32,25 @@ int main() {
     assert(!gate2.rWasEligible);
     assert(!rMayFire(true, false, now + 3 * freq, gate2));
 
+    // Program must never auto-start because TAB happened to be held while
+    // launching. It arms only after both control keys have been released.
+    StartStopLatch latch;
+    latch.prime(true, false);
+    assert(!latch.armed);
+    assert(latch.update(true, false) == 0);
+    assert(latch.update(false, false) == 0);
+    assert(latch.armed);
+    assert(latch.update(true, false) == 1);
+    assert(latch.update(true, false) == 0);
+    assert(latch.update(false, false) == 0);
+    assert(latch.update(false, true) == -1);
+    assert(latch.update(false, true) == 0);
+
+    // Stop wins if both edges somehow occur in the same sample.
+    StartStopLatch priority;
+    priority.prime(false, false);
+    assert(priority.update(true, true) == -1);
+
     std::cout << "Premium Plus Combo core tests: PASS\n";
     return 0;
 }
