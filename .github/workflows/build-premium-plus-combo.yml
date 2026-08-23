@@ -30,7 +30,7 @@ jobs:
       - name: Core logic tests
         run: |
           cd tools\premium-plus-combo
-          cl /nologo /std:c++17 /O2 /MT /EHsc /W4 tests.cpp /Fe:PremiumPlusTests.exe
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 tests.cpp /Fe:PremiumPlusTests.exe
           PremiumPlusTests.exe
 
       - name: Compile embedded resources
@@ -41,7 +41,7 @@ jobs:
       - name: Build portable release EXE
         run: |
           cd tools\premium-plus-combo
-          cl /nologo /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
 
       - name: Validate single-EXE runtime dependencies
         shell: pwsh
@@ -58,17 +58,76 @@ jobs:
           "Architecture=x64" | Add-Content build-info.txt
           "CoreTests=PASS" | Add-Content build-info.txt
           "StaticCRT=PASS" | Add-Content build-info.txt
+          "UTF8Build=PASS" | Add-Content build-info.txt
 
-      - name: Windows runtime smoke test
+      - name: Windows initial-state hotkey and UI test
         shell: pwsh
         run: |
           cd tools/premium-plus-combo
-          $p = Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
-          Start-Sleep -Seconds 3
-          $p.Refresh()
-          if ($p.HasExited) {
-            throw "PremiumPlusCombo.exe exited during runtime smoke test with code $($p.ExitCode)"
+          Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          public static class Win32PpcTest {
+              [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+              public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+              [DllImport("user32.dll")]
+              public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
+              [DllImport("user32.dll")]
+              public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
           }
+          "@
+
+          function Get-WindowTitle([IntPtr]$h) {
+              $sb = New-Object System.Text.StringBuilder 256
+              [void][Win32PpcTest]::GetWindowText($h, $sb, $sb.Capacity)
+              return $sb.ToString()
+          }
+          function Press-Key([byte]$vk) {
+              [Win32PpcTest]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
+              Start-Sleep -Milliseconds 40
+              [Win32PpcTest]::keybd_event($vk, 0, 2, [UIntPtr]::Zero)
+          }
+
+          $p = Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
+          $handle = [IntPtr]::Zero
+          for ($i=0; $i -lt 50; $i++) {
+              Start-Sleep -Milliseconds 100
+              $p.Refresh()
+              if ($p.HasExited) { throw "PremiumPlusCombo.exe exited during startup with code $($p.ExitCode)" }
+              if ($p.MainWindowHandle -ne 0) { $handle = [IntPtr]$p.MainWindowHandle; break }
+          }
+          if ($handle -eq [IntPtr]::Zero) { throw 'Main window handle was not created' }
+
+          $title = Get-WindowTitle $handle
+          if ($title -ne 'Premium Plus Combo|READY') { throw "Program did not start inactive. Title=$title" }
+          "InitialInactive=PASS" | Add-Content build-info.txt
+
+          Press-Key 0x09
+          Start-Sleep -Milliseconds 500
+          $title = Get-WindowTitle $handle
+          if ($title -ne 'Premium Plus Combo|ACTIVE') { throw "TAB did not start the program. Title=$title" }
+          "TabStart=PASS" | Add-Content build-info.txt
+
+          Press-Key 0x14
+          Start-Sleep -Milliseconds 500
+          $title = Get-WindowTitle $handle
+          if ($title -ne 'Premium Plus Combo|READY') { throw "Caps Lock did not stop the program. Title=$title" }
+          "CapsStop=PASS" | Add-Content build-info.txt
+
+          $bmp = New-Object System.Drawing.Bitmap 820,560
+          $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+          $hdc = $graphics.GetHdc()
+          $ok = [Win32PpcTest]::PrintWindow($handle, $hdc, 2)
+          $graphics.ReleaseHdc($hdc)
+          $graphics.Dispose()
+          if (-not $ok) { $bmp.Dispose(); throw 'PrintWindow failed' }
+          $bmp.Save((Join-Path (Get-Location) 'ui-smoke.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+          $bmp.Dispose()
+          if ((Get-Item ui-smoke.png).Length -lt 10000) { throw 'UI screenshot is unexpectedly small' }
+          "UIScreenshot=PASS" | Add-Content build-info.txt
+
           Stop-Process -Id $p.Id -Force
           "RuntimeSmoke=PASS" | Add-Content build-info.txt
 
@@ -80,4 +139,5 @@ jobs:
             tools/premium-plus-combo/PremiumPlusCombo.exe
             tools/premium-plus-combo/build-info.txt
             tools/premium-plus-combo/dependencies.txt
+            tools/premium-plus-combo/ui-smoke.png
           if-no-files-found: error
