@@ -18,7 +18,13 @@
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch(msg) {
-        case WM_CREATE: MakeChildControls(hwnd); SetTimer(hwnd,TIMER_UI,250,nullptr); return 0;
+        case WM_CREATE:
+            if(!MakeChildControls(hwnd)) {
+                MessageBoxW(hwnd,L"Arayüz kontrolleri oluşturulamadı. Program başlatılmadı.",L"Premium Plus Combo",MB_OK|MB_ICONERROR);
+                return -1;
+            }
+            SetTimer(hwnd,TIMER_UI,250,nullptr);
+            return 0;
         case WM_NCHITTEST: {
             POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)}; ScreenToClient(hwnd,&p);
             if(p.y<58 && !PtIn(rcMin,p.x,p.y) && !PtIn(rcClose,p.x,p.y)) return HTCAPTION;
@@ -117,7 +123,14 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int) {
 
     int sx=(GetSystemMetrics(SM_CXSCREEN)-W)/2, sy=(GetSystemMetrics(SM_CYSCREEN)-H)/2;
     g_hwnd=CreateWindowExW(WS_EX_APPWINDOW,L"PremiumPlusComboWindow",L"Premium Plus Combo|READY",WS_POPUP|WS_CLIPCHILDREN,sx,sy,W,H,nullptr,nullptr,hInst,nullptr);
-    if(!g_hwnd) return 2;
+    if(!g_hwnd) {
+        if(g_wakeEvent) CloseHandle(g_wakeEvent);
+        g_karus.reset(); g_human.reset();
+        if(g_font) DeleteObject(g_font); if(g_fontBold) DeleteObject(g_fontBold); if(g_brushCream) DeleteObject(g_brushCream);
+        if(g_gdiplusToken) GdiplusShutdown(g_gdiplusToken);
+        timeEndPeriod(1);
+        return 2;
+    }
 
     std::thread combo(ComboWorker), rworker(RWorker), input(InputWorker);
     ShowWindow(g_hwnd,SW_SHOW);
