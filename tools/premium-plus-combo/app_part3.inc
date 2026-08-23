@@ -1,5 +1,3 @@
-}
-
 void Panel(Graphics& g, RectF r, Color fill=Color(245,250,241,226), Color border=Color(255,182,132,51), float radius=8.0f) {
     GraphicsPath p; float d=radius*2;
     p.AddArc(r.X,r.Y,d,d,180,90); p.AddArc(r.GetRight()-d,r.Y,d,d,270,90); p.AddArc(r.GetRight()-d,r.GetBottom()-d,d,d,0,90); p.AddArc(r.X,r.GetBottom()-d,d,d,90,90); p.CloseFigure();
@@ -8,7 +6,7 @@ void Panel(Graphics& g, RectF r, Color fill=Color(245,250,241,226), Color border
 
 void Button(Graphics& g, const RECT& rr, const wchar_t* text, Color c1, Color c2, bool selected=false) {
     RectF r((REAL)rr.left,(REAL)rr.top,(REAL)(rr.right-rr.left),(REAL)(rr.bottom-rr.top));
-    GraphicsPath p; const float rad=9, d=18;
+    GraphicsPath p; const float d=18;
     p.AddArc(r.X,r.Y,d,d,180,90); p.AddArc(r.GetRight()-d,r.Y,d,d,270,90); p.AddArc(r.GetRight()-d,r.GetBottom()-d,d,d,0,90); p.AddArc(r.X,r.GetBottom()-d,d,d,90,90); p.CloseFigure();
     LinearGradientBrush br(r,c1,c2,LinearGradientModeVertical); g.FillPath(&br,&p);
     Pen pen(selected?Color(255,255,193,64):Color(255,162,111,33), selected?2.3f:1.4f); g.DrawPath(&pen,&p);
@@ -89,7 +87,7 @@ void MakeChildControls(HWND w) {
     SyncControls();
 }
 
-void DrawUi(HWND hwnd, HDC hdc) {
+void DrawUi(HWND, HDC hdc) {
     Graphics g(hdc); g.SetSmoothingMode(SmoothingModeAntiAlias); g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
     LinearGradientBrush bg(Rect(0,0,W,H),Color(255,251,244,229),Color(255,232,210,174),LinearGradientModeVertical); g.FillRectangle(&bg,0,0,W,H);
     Pen edge(Color(255,156,105,28),2); g.DrawRectangle(&edge,2,2,W-5,H-5);
