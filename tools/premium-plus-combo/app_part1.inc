@@ -1,6 +1,4 @@
 #define NOMINMAX
-#define UNICODE
-#define _UNICODE
 #include <windows.h>
 #include <windowsx.h>
 #include <cstring>
@@ -34,6 +32,8 @@ constexpr int W = 820;
 constexpr int H = 560;
 constexpr UINT WM_APP_CUREKEY = WM_APP + 1;
 constexpr UINT_PTR TIMER_UI = 1;
+constexpr int HOTKEY_START = 0x5101;
+constexpr int HOTKEY_STOP = 0x5102;
 constexpr ULONG_PTR EXTRA_TAG = 0x5050434F4D424FULL;
 
 HWND g_hwnd{};
@@ -47,7 +47,7 @@ std::unique_ptr<Bitmap> g_human;
 std::atomic<bool> g_quit{false};
 std::atomic<bool> g_active{false};
 std::atomic<bool> g_captureCure{false};
-std::atomic<int> g_currentBar{0};
+std::atomic<int> g_currentBar{1};
 std::atomic<long long> g_rSuppressUntil{0};
 std::atomic<bool> g_cureBusy{false};
 std::atomic<Mode> g_mode{Mode::Maximum};
