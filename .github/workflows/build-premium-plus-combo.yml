@@ -81,6 +81,11 @@ jobs:
               public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc callback, IntPtr lParam);
               [DllImport("user32.dll")]
               public static extern bool IsWindowVisible(IntPtr hWnd);
+              public static int CountChildren(IntPtr parent) {
+                  int count = 0;
+                  EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) { count++; return true; }, IntPtr.Zero);
+                  return count;
+              }
               public static int CountVisibleChildren(IntPtr parent) {
                   int count = 0;
                   EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) {
@@ -99,6 +104,17 @@ jobs:
               $packed = (($y -band 0xffff) -shl 16) -bor ($x -band 0xffff)
               [void][Win32PpcTest]::SendMessage($h, 0x0202, [IntPtr]::Zero, [IntPtr]$packed)
           }
+          function Capture-Ui([IntPtr]$handle) {
+              $bmp = New-Object System.Drawing.Bitmap 820,560
+              $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+              $hdc = $graphics.GetHdc()
+              $ok = [Win32PpcTest]::PrintWindow($handle, $hdc, 2)
+              $graphics.ReleaseHdc($hdc)
+              $graphics.Dispose()
+              if (-not $ok) { $bmp.Dispose(); throw 'PrintWindow failed' }
+              $bmp.Save((Join-Path (Get-Location) 'ui-smoke.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+              $bmp.Dispose()
+          }
 
           $p = Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
           $handle = [IntPtr]::Zero
@@ -109,11 +125,21 @@ jobs:
               if ($p.MainWindowHandle -ne 0) { $handle = [IntPtr]$p.MainWindowHandle; break }
           }
           if ($handle -eq [IntPtr]::Zero) { throw 'Main window handle was not created' }
+          Start-Sleep -Seconds 1
 
           if ((Get-ActiveMarker $handle) -ne 0) { throw 'Program did not start inactive' }
           "InitialInactive=PASS" | Add-Content build-info.txt
 
+          $children = [Win32PpcTest]::CountChildren($handle)
           $visibleChildren = [Win32PpcTest]::CountVisibleChildren($handle)
+          "ChildWindows=$children" | Add-Content build-info.txt
+          "VisibleChildWindows=$visibleChildren" | Add-Content build-info.txt
+
+          Capture-Ui $handle
+          if ((Get-Item ui-smoke.png).Length -lt 10000) { throw 'UI screenshot is unexpectedly small' }
+          "UIScreenshot=PASS" | Add-Content build-info.txt
+
+          if ($children -lt 10) { throw "Expected all input controls to exist; child count=$children" }
           if ($visibleChildren -lt 10) { throw "Expected all input controls to be visible; visible child count=$visibleChildren" }
           "VisibleControls=PASS($visibleChildren)" | Add-Content build-info.txt
 
@@ -127,22 +153,11 @@ jobs:
           if ((Get-ActiveMarker $handle) -ne 0) { throw 'Stop button did not stop the program' }
           "StopButton=PASS" | Add-Content build-info.txt
 
-          $bmp = New-Object System.Drawing.Bitmap 820,560
-          $graphics = [System.Drawing.Graphics]::FromImage($bmp)
-          $hdc = $graphics.GetHdc()
-          $ok = [Win32PpcTest]::PrintWindow($handle, $hdc, 2)
-          $graphics.ReleaseHdc($hdc)
-          $graphics.Dispose()
-          if (-not $ok) { $bmp.Dispose(); throw 'PrintWindow failed' }
-          $bmp.Save((Join-Path (Get-Location) 'ui-smoke.png'), [System.Drawing.Imaging.ImageFormat]::Png)
-          $bmp.Dispose()
-          if ((Get-Item ui-smoke.png).Length -lt 10000) { throw 'UI screenshot is unexpectedly small' }
-          "UIScreenshot=PASS" | Add-Content build-info.txt
-
           Stop-Process -Id $p.Id -Force
           "RuntimeSmoke=PASS" | Add-Content build-info.txt
 
-      - name: Upload tested release
+      - name: Upload tested release and UI diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: PremiumPlusCombo-Windows-x64
