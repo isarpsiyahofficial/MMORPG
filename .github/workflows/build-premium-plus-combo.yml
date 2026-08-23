@@ -1,0 +1,65 @@
+name: Build Premium Plus Combo
+
+on:
+  push:
+    branches: [ premium-plus-combo ]
+    paths:
+      - 'tools/premium-plus-combo/**'
+      - '.github/workflows/build-premium-plus-combo.yml'
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Core logic tests
+        run: |
+          cd tools\premium-plus-combo
+          cl /nologo /std:c++17 /O2 /MT /EHsc /W4 tests.cpp /Fe:PremiumPlusTests.exe
+          PremiumPlusTests.exe
+
+      - name: Compile embedded resources
+        run: |
+          cd tools\premium-plus-combo
+          rc /nologo /fo app.res app.rc
+
+      - name: Build portable release EXE
+        run: |
+          cd tools\premium-plus-combo
+          cl /nologo /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
+
+      - name: Validate single-EXE runtime dependencies
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $deps = (dumpbin /DEPENDENTS PremiumPlusCombo.exe | Out-String)
+          $deps | Set-Content dependencies.txt
+          if ($deps -match 'VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt') {
+            throw 'Unexpected external VC runtime dependency detected'
+          }
+          $hash = (Get-FileHash PremiumPlusCombo.exe -Algorithm SHA256).Hash
+          "SHA256=$hash" | Set-Content build-info.txt
+          "Size=$((Get-Item PremiumPlusCombo.exe).Length)" | Add-Content build-info.txt
+          "Architecture=x64" | Add-Content build-info.txt
+          "CoreTests=PASS" | Add-Content build-info.txt
+          "StaticCRT=PASS" | Add-Content build-info.txt
+
+      - name: Upload tested release
+        uses: actions/upload-artifact@v4
+        with:
+          name: PremiumPlusCombo-Windows-x64
+          path: |
+            tools/premium-plus-combo/PremiumPlusCombo.exe
+            tools/premium-plus-combo/build-info.txt
+            tools/premium-plus-combo/dependencies.txt
+          if-no-files-found: error
