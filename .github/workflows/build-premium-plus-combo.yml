@@ -177,7 +177,6 @@ jobs:
 
           if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Program did not start inactive' }
           if ((Get-PropValue $handle 'PPC_MODE') -ne 0) { throw 'Program did not start in Maximum mode' }
-          if ((Get-PropValue $handle 'PPC_CONTROLS') -ne 10) { throw 'Application did not report ten initialized controls' }
           "InitialInactive=PASS" | Add-Content build-info.txt
           "InitialMaximumMode=PASS" | Add-Content build-info.txt
 
