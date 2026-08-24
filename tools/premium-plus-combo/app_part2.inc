@@ -187,6 +187,31 @@ bool RefreshRuntimeHotkeys(bool showError) {
     return true;
 }
 
+void RestoreReservedCapsState() {
+    if (!g_hwnd) return;
+    const int desired = g_reservedCapsState.load(std::memory_order_relaxed) & 1;
+    const int current = GetKeyState(VK_CAPITAL) & 1;
+    if (current == desired) return;
+
+    // RegisterHotKey receives Caps Lock globally but Windows still toggles the
+    // lock state. Temporarily remove our hotkeys, synthesize exactly one Caps
+    // press to restore the previous typing state, then register the controls again.
+    // This avoids a permanent low-level keyboard hook and therefore cannot rewrite
+    // ordinary C/6/etc. typing or throttle the macro's own generated input.
+    UnregisterRuntimeHotkeys();
+    INPUT in[2]{};
+    in[0].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = VK_CAPITAL;
+    in[0].ki.dwExtraInfo = EXTRA_TAG;
+    in[1].type = INPUT_KEYBOARD;
+    in[1].ki.wVk = VK_CAPITAL;
+    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    in[1].ki.dwExtraInfo = EXTRA_TAG;
+    SendInput(2, in, sizeof(INPUT));
+    Sleep(2);
+    RefreshRuntimeHotkeys(false);
+}
+
 void UpdateStateTitle() {
     if (!g_hwnd) return;
     SetWindowTextW(g_hwnd, g_active.load(std::memory_order_relaxed) ? L"Premium Plus Combo|ACTIVE" : L"Premium Plus Combo|READY");
