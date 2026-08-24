@@ -7,6 +7,9 @@ namespace ppc {
 
 enum class Mode : int { Maximum = 0, Turbo = 1 };
 
+// Kept Windows-header independent so the core tests stay portable.
+constexpr int kVkCapsLock = 0x14;
+
 struct Settings {
     std::array<int, 3> comboVk{{'8','9','0'}};
     bool rEnabled{true};
@@ -16,6 +19,8 @@ struct Settings {
     int cureBar{2};
     int cureSlot{6};
     int cureHotkey{'C'};
+    int startHotkey{kVkCapsLock};
+    int stopHotkey{kVkCapsLock};
 };
 
 inline int minorRate(Mode mode) noexcept {
@@ -36,7 +41,21 @@ inline Settings sanitize(Settings s) noexcept {
     s.cureBar = std::clamp(s.cureBar, 1, 8);
     s.cureSlot = std::clamp(s.cureSlot, 1, 8);
     if (s.cureHotkey <= 0 || s.cureHotkey > 0xFE) s.cureHotkey = 'C';
+    if (s.startHotkey <= 0 || s.startHotkey > 0xFE) s.startHotkey = kVkCapsLock;
+    if (s.stopHotkey <= 0 || s.stopHotkey > 0xFE) s.stopHotkey = kVkCapsLock;
     return s;
+}
+
+// +1=start, -1=stop, 0=no control action.
+// When both controls use the same key (the default Caps Lock setup),
+// that one key behaves as an explicit on/off toggle.
+inline int hotkeyAction(int vk, bool active, const Settings& s) noexcept {
+    const bool isStart = vk == s.startHotkey;
+    const bool isStop = vk == s.stopHotkey;
+    if (isStart && isStop) return active ? -1 : 1;
+    if (isStop) return -1;
+    if (isStart) return 1;
+    return 0;
 }
 
 struct CureGate {
@@ -54,44 +73,5 @@ inline CureGate beginCure(bool active, bool rEnabled, std::int64_t nowTicks, std
 inline bool rMayFire(bool active, bool rEnabled, std::int64_t nowTicks, const CureGate& gate) noexcept {
     return active && rEnabled && nowTicks >= gate.suppressUntilTicks;
 }
-
-struct RisingEdge {
-    bool previous{false};
-
-    void prime(bool currentlyDown) noexcept {
-        previous = currentlyDown;
-    }
-
-    bool update(bool currentlyDown) noexcept {
-        const bool rising = currentlyDown && !previous;
-        previous = currentlyDown;
-        return rising;
-    }
-};
-
-struct StartStopLatch {
-    RisingEdge tab;
-    RisingEdge caps;
-    bool armed{false};
-
-    void prime(bool tabDown, bool capsDown) noexcept {
-        tab.prime(tabDown);
-        caps.prime(capsDown);
-        armed = !tabDown && !capsDown;
-    }
-
-    // Returns +1 for start, -1 for stop, 0 for no action.
-    int update(bool tabDown, bool capsDown) noexcept {
-        const bool tabRise = tab.update(tabDown);
-        const bool capsRise = caps.update(capsDown);
-        if (!armed) {
-            if (!tabDown && !capsDown) armed = true;
-            return 0;
-        }
-        if (capsRise) return -1; // stop always has priority
-        if (tabRise) return 1;
-        return 0;
-    }
-};
 
 } // namespace ppc
