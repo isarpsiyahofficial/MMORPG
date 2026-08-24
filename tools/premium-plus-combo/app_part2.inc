@@ -162,69 +162,93 @@ void StopMacro() {
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
 }
 
-bool IsKeyDown(int vk) {
-    return (GetAsyncKeyState(vk) & 0x8000) != 0;
-}
-
-bool IsReservedCureKey(int vk, const Settings& s) {
-    if (vk == VK_TAB || vk == VK_CAPITAL || vk == 'R') return true;
+bool ComboContains(const Settings& s, int vk) {
     return vk == s.comboVk[0] || vk == s.comboVk[1] || vk == s.comboVk[2];
 }
 
-void InputWorker() {
-    std::array<bool, 256> previous{};
-    for (int vk = 0; vk < 256; ++vk) previous[vk] = IsKeyDown(vk);
-
-    ppc::StartStopLatch control;
-    control.prime(previous[VK_TAB], previous[VK_CAPITAL]);
-
-    while (!g_quit.load(std::memory_order_relaxed)) {
-        const bool tabDown = IsKeyDown(VK_TAB);
-        const bool capsDown = IsKeyDown(VK_CAPITAL);
-        const int action = control.update(tabDown, capsDown);
-        if (action > 0) StartMacro();
-        else if (action < 0) StopMacro();
-        previous[VK_TAB] = tabDown;
-        previous[VK_CAPITAL] = capsDown;
-
-        Settings s;
-        {
-            std::lock_guard<std::mutex> lk(g_settingsMutex);
-            s = g_settings;
-        }
-
-        bool capture = g_captureCure.load(std::memory_order_relaxed);
-        bool capturedThisPass = false;
-        for (int vk = VK_BACK; vk <= 0xFE; ++vk) {
-            if (vk == VK_TAB || vk == VK_CAPITAL) continue;
-            const bool down = IsKeyDown(vk);
-            const bool rising = down && !previous[vk];
-            previous[vk] = down;
-            if (!rising) continue;
-
-            if (vk >= VK_F1 && vk <= VK_F8) g_currentBar.store(vk - VK_F1 + 1, std::memory_order_relaxed);
-
-            if (capture && !capturedThisPass) {
-                if (IsReservedCureKey(vk, s)) {
-                    PostMessageW(g_hwnd, WM_APP_CUREKEY, WPARAM(s.cureHotkey), 2);
-                } else if (g_captureCure.exchange(false, std::memory_order_acq_rel)) {
-                    {
-                        std::lock_guard<std::mutex> lk(g_settingsMutex);
-                        g_settings.cureHotkey = vk;
-                    }
-                    PostMessageW(g_hwnd, WM_APP_CUREKEY, WPARAM(vk), 0);
-                }
-                capturedThisPass = true;
-                capture = false;
-                continue;
-            }
-
-            if (g_active.load(std::memory_order_relaxed) && s.cureEnabled && vk == s.cureHotkey) {
-                std::thread(CureWorker).detach();
-            }
-        }
-        Sleep(1);
+bool CanAssignHotkey(CaptureTarget target, int vk, const Settings& s) {
+    if (vk <= 0 || vk > 0xFE) return false;
+    if (vk == 'R' || ComboContains(s, vk)) return false;
+    if (target == CaptureTarget::Cure) {
+        return vk != s.startHotkey && vk != s.stopHotkey;
     }
+    if (target == CaptureTarget::Start || target == CaptureTarget::Stop) {
+        return vk != s.cureHotkey;
+    }
+    return false;
+}
+
+LRESULT CALLBACK KeyboardProc(int code, WPARAM wp, LPARAM lp) {
+    if (code != HC_ACTION || !lp) return CallNextHookEx(g_keyboardHook, code, wp, lp);
+
+    const auto* k = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lp);
+    const int vk = static_cast<int>(k->vkCode);
+    if (vk <= 0 || vk >= 256) return CallNextHookEx(g_keyboardHook, code, wp, lp);
+
+    // Never react to this application's own generated combo/R/Cure keystrokes.
+    if ((k->flags & LLKHF_INJECTED) != 0 && k->dwExtraInfo == EXTRA_TAG) {
+        return CallNextHookEx(g_keyboardHook, code, wp, lp);
+    }
+
+    const bool downMessage = wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN;
+    const bool upMessage = wp == WM_KEYUP || wp == WM_SYSKEYUP;
+    if (!downMessage && !upMessage) return CallNextHookEx(g_keyboardHook, code, wp, lp);
+
+    static std::array<bool, 256> physicalDown{};
+    static std::array<bool, 256> swallowUntilUp{};
+
+    if (upMessage) {
+        physicalDown[vk] = false;
+        if (swallowUntilUp[vk]) {
+            swallowUntilUp[vk] = false;
+            return 1;
+        }
+        return CallNextHookEx(g_keyboardHook, code, wp, lp);
+    }
+
+    const bool rising = !physicalDown[vk];
+    physicalDown[vk] = true;
+    if (!rising) {
+        if (swallowUntilUp[vk]) return 1;
+        return CallNextHookEx(g_keyboardHook, code, wp, lp);
+    }
+
+    const CaptureTarget capture = static_cast<CaptureTarget>(g_captureTarget.load(std::memory_order_acquire));
+    if (capture != CaptureTarget::None) {
+        g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_release);
+        g_captureSwallowVk.store(vk, std::memory_order_release);
+        swallowUntilUp[vk] = true;
+        if (g_hwnd) PostMessageW(g_hwnd, WM_APP_CAPTURED_KEY, static_cast<WPARAM>(vk), static_cast<LPARAM>(capture));
+        return 1;
+    }
+
+    if (vk >= VK_F1 && vk <= VK_F8) {
+        g_currentBar.store(vk - VK_F1 + 1, std::memory_order_relaxed);
+    }
+
+    Settings s;
+    {
+        std::lock_guard<std::mutex> lk(g_settingsMutex);
+        s = g_settings;
+    }
+
+    const int action = ppc::hotkeyAction(vk, g_active.load(std::memory_order_relaxed), s);
+    if (action != 0) {
+        swallowUntilUp[vk] = true;
+        if (g_hwnd) PostMessageW(g_hwnd, WM_APP_HOTKEY_ACTION, static_cast<WPARAM>(action), 0);
+        return 1;
+    }
+
+    // Cure hotkey is completely transparent while the macro is stopped.
+    // This prevents ordinary typing (for example the letter C) from ever
+    // turning into Cure slot keys merely because the application is open.
+    if (g_active.load(std::memory_order_relaxed) && s.cureEnabled && vk == s.cureHotkey) {
+        swallowUntilUp[vk] = true;
+        if (g_hwnd) PostMessageW(g_hwnd, WM_APP_CURE_TRIGGER, 0, 0);
+        return 1;
+    }
+
+    return CallNextHookEx(g_keyboardHook, code, wp, lp);
 }
 
 std::unique_ptr<Bitmap> LoadImageResource(int id) {
