@@ -1,6 +1,20 @@
 void BeginCapture(CaptureTarget target, HWND button) {
     StopMacro();
+    UnregisterRuntimeHotkeys();
+    if (g_keyboardHook) {
+        UnhookWindowsHookEx(g_keyboardHook);
+        g_keyboardHook = nullptr;
+    }
+    g_captureSwallowVk.store(0, std::memory_order_release);
     g_captureTarget.store(static_cast<int>(target), std::memory_order_release);
+    g_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardProc, GetModuleHandleW(nullptr), 0);
+    if (!g_keyboardHook) {
+        g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_release);
+        SyncControls();
+        RefreshRuntimeHotkeys(false);
+        MessageBoxW(g_hwnd, L"Tuş atama ekranı başlatılamadı.", L"Premium Plus Combo", MB_OK | MB_ICONERROR);
+        return;
+    }
     SetWindowTextW(button, L"Tuşa bas...");
 }
 
@@ -70,7 +84,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (PtIn(rcSave, x, y)) {
-                if (ApplyControls(true)) {
+                if (ApplyControls(true) && RefreshRuntimeHotkeys(true)) {
                     SaveRegistry();
                     MessageBoxW(hwnd,
                                 L"Ayarlar kaydedildi. Giriş dizisi, Açma/Kapatma tuşları, R Combo ve Cure ayarları sonraki açılışta geri yüklenir. Program her açılışta kapalı ve Maximum Mod hazır durumda başlar.",
@@ -108,9 +122,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
 
             if (!CanAssignHotkey(target, vk, s)) {
-                HWND targetButton = CaptureButton(target);
-                if (targetButton) SetWindowTextW(targetButton, L"Tuşa bas...");
-                g_captureTarget.store(static_cast<int>(target), std::memory_order_release);
+                SyncControls();
+                RefreshRuntimeHotkeys(false);
                 MessageBoxW(hwnd,
                             target == CaptureTarget::Cure
                                 ? L"Bu tuş giriş dizisi, R Combo veya Açma/Kapatma tuşlarından biri tarafından kullanılıyor. Cure için farklı bir tuş seçin."
@@ -127,18 +140,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             HWND targetButton = CaptureButton(target);
             if (targetButton) SetWindowTextW(targetButton, VkName(vk).c_str());
+            if (!RefreshRuntimeHotkeys(true)) SyncControls();
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
 
-        case WM_APP_HOTKEY_ACTION: {
-            const int action = static_cast<int>(static_cast<INT_PTR>(wp));
-            if (action > 0) {
-                if (ApplyControls(false)) StartMacro();
-            } else if (action < 0) {
-                StopMacro();
+        case WM_HOTKEY: {
+            if (static_cast<int>(wp) == HOTKEY_ID_START) {
+                Settings s;
+                {
+                    std::lock_guard<std::mutex> lk(g_settingsMutex);
+                    s = g_settings;
+                }
+                if (s.startHotkey == s.stopHotkey && g_active.load(std::memory_order_relaxed)) StopMacro();
+                else StartMacro();
+                return 0;
             }
-            return 0;
+            if (static_cast<int>(wp) == HOTKEY_ID_STOP) {
+                StopMacro();
+                return 0;
+            }
+            if (static_cast<int>(wp) == HOTKEY_ID_CURE) {
+                if (g_active.load(std::memory_order_relaxed)) std::thread(CureWorker).detach();
+                return 0;
+            }
+            break;
         }
 
         case WM_APP_CURE_TRIGGER:
@@ -148,8 +174,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_TIMER:
             if (wp == TIMER_UI) {
                 UpdateDiagnosticMarkers();
-                // No continuous full-window repaint. Only the elapsed-time/status
-                // footer needs refreshing while the macro is actually active.
+                // The whole window is never continuously repainted. Only the tiny
+                // footer is refreshed while active for elapsed time/status.
                 if (g_active.load(std::memory_order_relaxed)) InvalidateRect(hwnd, &rcFooter, FALSE);
                 return 0;
             }
@@ -200,6 +226,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RemovePropW(hwnd, L"PPC_COMBO_BURSTS");
             RemovePropW(hwnd, L"PPC_R_PRESSES");
             RemovePropW(hwnd, L"PPC_CURE_RUNS");
+            UnregisterRuntimeHotkeys();
             g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_release);
             if (g_keyboardHook) {
                 UnhookWindowsHookEx(g_keyboardHook);
@@ -324,9 +351,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
         return 2;
     }
 
-    g_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardProc, hInst, 0);
-    if (!g_keyboardHook) {
-        MessageBoxW(g_hwnd, L"Global kontrol tuşları başlatılamadı. Program güvenli şekilde kapatılacak.", L"Premium Plus Combo", MB_OK | MB_ICONERROR);
+    // Register only the selected control keys. No persistent keyboard hook is
+    // active during normal use, so simply opening the app cannot alter typing.
+    if (!RefreshRuntimeHotkeys(true)) {
         DestroyWindow(g_hwnd);
         CloseHandle(g_wakeEvent);
         g_wakeEvent = nullptr;
@@ -361,6 +388,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     if (rworker.joinable()) rworker.join();
     for (int i = 0; i < 500 && g_cureBusy.load(std::memory_order_acquire); ++i) Sleep(1);
 
+    UnregisterRuntimeHotkeys();
     if (g_keyboardHook) {
         UnhookWindowsHookEx(g_keyboardHook);
         g_keyboardHook = nullptr;
