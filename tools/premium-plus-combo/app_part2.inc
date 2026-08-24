@@ -1,6 +1,6 @@
 void SendCombo(const std::array<int, 3>& keys, int repeats) {
-    repeats = std::clamp(repeats, 1, 4);
-    INPUT in[24]{};
+    repeats = std::clamp(repeats, 1, 8);
+    INPUT in[48]{};
     int count = 0;
     for (int r = 0; r < repeats; ++r) {
         for (int i = 0; i < 3; ++i) {
@@ -35,11 +35,16 @@ void PreciseWaitUntil(long long target) {
 
 void ComboWorker() {
     const long long freq = QpcFreq();
-    long long next = QpcNow();
+    long long epoch = QpcNow();
+    unsigned long long sentInEpoch = 0;
+    int lastHz = 0;
+
     while (!g_quit.load(std::memory_order_relaxed)) {
         if (!g_active.load(std::memory_order_relaxed)) {
             WaitForSingleObject(g_wakeEvent, 50);
-            next = QpcNow();
+            epoch = QpcNow();
+            sentInEpoch = 0;
+            lastHz = 0;
             continue;
         }
 
@@ -49,22 +54,37 @@ void ComboWorker() {
             s = g_settings;
         }
 
-        // Two/four complete cycles at 60 scheduler ticks keep the requested
-        // average while reducing system-call overhead: 2*60=120 and 4*60=240
-        // presses/sec for EACH combo key. Every generated event carries EXTRA_TAG,
-        // so the tiny Caps-only control hook never mistakes macro output for a
-        // physical control-key press.
         const int targetHz = ppc::minorRate(g_mode.load(std::memory_order_relaxed));
-        const int repeats = targetHz >= 240 ? 4 : 2;
-        constexpr int schedulerHz = 60;
-        const long long step = std::max<long long>(1, freq / schedulerHz);
+        if (targetHz != lastHz) {
+            epoch = QpcNow();
+            sentInEpoch = 0;
+            lastHz = targetHz;
+        }
         if (!g_active.load(std::memory_order_relaxed)) continue;
 
-        SendCombo(s.comboVk, repeats);
-        next += step;
         const long long now = QpcNow();
-        if (now - next > step * 2) next = now + step;
-        PreciseWaitUntil(next);
+        const long long elapsed = std::max<long long>(0, now - epoch);
+        // +1 makes the first complete 8>9>0 cycle immediate. After that, the
+        // expected cycle count is derived from QPC time rather than a fixed
+        // scheduler tick. If Windows briefly delays SendInput (for example while
+        // the Caps-only control hook is installed), the next call batches up to
+        // eight overdue cycles and catches up instead of permanently losing rate.
+        const unsigned long long shouldHave =
+            1ULL + static_cast<unsigned long long>((elapsed * static_cast<long long>(targetHz)) / freq);
+
+        if (shouldHave > sentInEpoch) {
+            const unsigned long long overdue = shouldHave - sentInEpoch;
+            const int batch = static_cast<int>(std::min<unsigned long long>(8ULL, overdue));
+            SendCombo(s.comboVk, batch);
+            sentInEpoch += static_cast<unsigned long long>(batch);
+            continue;
+        }
+
+        const unsigned long long nextIndex = sentInEpoch;
+        const long long target = epoch +
+            static_cast<long long>((nextIndex * static_cast<unsigned long long>(freq)) /
+                                   static_cast<unsigned long long>(targetHz));
+        PreciseWaitUntil(target);
     }
 }
 
