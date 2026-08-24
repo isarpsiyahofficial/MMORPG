@@ -163,19 +163,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const bool capsControl = s.startHotkey == VK_CAPITAL;
                 if (s.startHotkey == s.stopHotkey && g_active.load(std::memory_order_relaxed)) StopMacro();
                 else StartMacro();
-                if (capsControl) RestoreReservedCapsState();
+                // WM_HOTKEY arrives on key-down; Caps state flips after the
+                // physical key is released. Restore it shortly afterwards.
+                if (capsControl) SetTimer(hwnd, TIMER_CAPS_RESTORE, 100, nullptr);
                 return 0;
             }
             if (static_cast<int>(wp) == HOTKEY_ID_STOP) {
                 const bool capsControl = s.stopHotkey == VK_CAPITAL;
                 StopMacro();
-                if (capsControl) RestoreReservedCapsState();
+                if (capsControl) SetTimer(hwnd, TIMER_CAPS_RESTORE, 100, nullptr);
                 return 0;
             }
             if (static_cast<int>(wp) == HOTKEY_ID_CURE) {
                 const bool capsControl = s.cureHotkey == VK_CAPITAL;
                 if (g_active.load(std::memory_order_relaxed)) std::thread(CureWorker).detach();
-                if (capsControl) RestoreReservedCapsState();
+                if (capsControl) SetTimer(hwnd, TIMER_CAPS_RESTORE, 100, nullptr);
                 return 0;
             }
             break;
@@ -186,6 +188,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case WM_TIMER:
+            if (wp == TIMER_CAPS_RESTORE) {
+                KillTimer(hwnd, TIMER_CAPS_RESTORE);
+                RestoreReservedCapsState();
+                return 0;
+            }
             if (wp == TIMER_UI) {
                 UpdateDiagnosticMarkers();
                 // The whole window is never continuously repainted. Only the tiny
@@ -250,6 +257,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_active.store(false, std::memory_order_release);
             if (g_wakeEvent) SetEvent(g_wakeEvent);
             KillTimer(hwnd, TIMER_UI);
+            KillTimer(hwnd, TIMER_CAPS_RESTORE);
             PostQuitMessage(0);
             return 0;
     }
