@@ -29,12 +29,11 @@ using ppc::Mode;
 using ppc::Settings;
 
 namespace {
-constexpr int W = 980;
-constexpr int H = 620;
+constexpr int W = 800;
+constexpr int H = 500;
 constexpr UINT WM_APP_CAPTURED_KEY = WM_APP + 1;
 constexpr UINT WM_APP_CURE_TRIGGER = WM_APP + 2;
 constexpr UINT WM_APP_CONTROL_KEY = WM_APP + 3;
-constexpr UINT_PTR TIMER_UI = 1;
 constexpr ULONG_PTR EXTRA_TAG = 0x5050434F4D424FULL;
 constexpr int HOTKEY_ID_START = 0x5101;
 constexpr int HOTKEY_ID_STOP  = 0x5102;
@@ -49,8 +48,8 @@ HFONT g_font{}, g_fontBold{};
 ULONG_PTR g_gdiplusToken{};
 std::unique_ptr<Bitmap> g_karus;
 std::unique_ptr<Bitmap> g_human;
-HHOOK g_keyboardHook{}; // installed only while assigning a new hotkey
-HHOOK g_capsControlHook{}; // installed only when Caps Lock is an active control key
+HHOOK g_keyboardHook{};
+HHOOK g_capsControlHook{};
 
 std::atomic<bool> g_quit{false};
 std::atomic<bool> g_active{false};
@@ -65,6 +64,7 @@ std::atomic<long long> g_startedTicks{0};
 std::atomic<unsigned long long> g_comboBursts{0};
 std::atomic<unsigned long long> g_rPresses{0};
 std::atomic<unsigned long long> g_cureRuns{0};
+std::atomic<unsigned long long> g_paintCount{0};
 HANDLE g_wakeEvent{};
 
 Settings g_settings{};
@@ -74,17 +74,18 @@ HWND hSeq1{}, hSeq2{}, hSeq3{};
 HWND hRCheck{}, hRMax{}, hRTurbo{};
 HWND hCureCheck{}, hCureBar{}, hCureSlot{}, hCureKey{};
 HWND hStartKey{}, hStopKey{};
+HWND hUnicodeSentinel{};
 
-RECT rcStart{300,64,485,114};
-RECT rcStop{500,64,685,114};
-RECT rcMax{285,180,475,250};
-RECT rcTurbo{510,180,700,250};
-RECT rcInfoMax{445,188,468,211};
-RECT rcInfoTurbo{670,188,693,211};
-RECT rcSave{390,538,590,576};
-RECT rcMin{910,15,940,43};
-RECT rcClose{945,15,975,43};
-RECT rcFooter{10,585,970,613};
+RECT rcStart{225,96,390,140};
+RECT rcStop{410,96,575,140};
+RECT rcMax{215,165,390,220};
+RECT rcTurbo{410,165,585,220};
+RECT rcInfoMax{360,171,384,195};
+RECT rcInfoTurbo{555,171,579,195};
+RECT rcSave{300,435,500,470};
+RECT rcMin{735,12,760,38};
+RECT rcClose{765,12,792,38};
+RECT rcFooter{12,474,788,496};
 
 long long QpcNow() {
     LARGE_INTEGER v{};
