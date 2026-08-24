@@ -1,6 +1,6 @@
 void SendCombo(const std::array<int, 3>& keys, int repeats) {
-    repeats = std::clamp(repeats, 1, 8);
-    INPUT in[48]{};
+    repeats = std::clamp(repeats, 1, 4);
+    INPUT in[24]{};
     int count = 0;
     for (int r = 0; r < repeats; ++r) {
         for (int i = 0; i < 3; ++i) {
@@ -49,16 +49,13 @@ void ComboWorker() {
             s = g_settings;
         }
 
-        // Windows must pass every generated keyboard event through the global
-        // control hook. On real Windows runners a single SendInput call can take
-        // close to one 30 Hz scheduling slice. To keep the *actual average* at
-        // the requested per-key rate without inflating the advertised target,
-        // generate several complete 8>9>0 cycles in each 30 Hz batch:
-        // Maximum = 4 cycles x 30 batches = 120 presses/sec per key.
-        // Turbo   = 8 cycles x 30 batches = 240 presses/sec per key.
+        // Runtime hotkeys use RegisterHotKey, so generated macro input no longer
+        // traverses a permanent low-level keyboard hook. Two/four complete cycles
+        // at 60 scheduler ticks keep the requested average while reducing system
+        // call overhead: 2*60=120 and 4*60=240 presses/sec for EACH combo key.
         const int targetHz = ppc::minorRate(g_mode.load(std::memory_order_relaxed));
-        const int repeats = targetHz >= 240 ? 8 : 4;
-        constexpr int schedulerHz = 30;
+        const int repeats = targetHz >= 240 ? 4 : 2;
+        constexpr int schedulerHz = 60;
         const long long step = std::max<long long>(1, freq / schedulerHz);
         if (!g_active.load(std::memory_order_relaxed)) continue;
 
@@ -149,6 +146,47 @@ void UpdateDiagnosticMarkers() {
     SetIntegerProp(L"PPC_CURE_RUNS", g_cureRuns.load(std::memory_order_relaxed));
 }
 
+void UnregisterRuntimeHotkeys() {
+    if (!g_hwnd) return;
+    UnregisterHotKey(g_hwnd, HOTKEY_ID_START);
+    UnregisterHotKey(g_hwnd, HOTKEY_ID_STOP);
+    UnregisterHotKey(g_hwnd, HOTKEY_ID_CURE);
+}
+
+bool RefreshRuntimeHotkeys(bool showError) {
+    if (!g_hwnd) return false;
+    UnregisterRuntimeHotkeys();
+
+    Settings s;
+    {
+        std::lock_guard<std::mutex> lk(g_settingsMutex);
+        s = g_settings;
+    }
+
+    bool ok = true;
+    if (s.startHotkey == s.stopHotkey) {
+        ok = RegisterHotKey(g_hwnd, HOTKEY_ID_START, MOD_NOREPEAT, static_cast<UINT>(s.startHotkey)) != FALSE;
+    } else {
+        ok = RegisterHotKey(g_hwnd, HOTKEY_ID_START, MOD_NOREPEAT, static_cast<UINT>(s.startHotkey)) != FALSE;
+        if (ok) ok = RegisterHotKey(g_hwnd, HOTKEY_ID_STOP, MOD_NOREPEAT, static_cast<UINT>(s.stopHotkey)) != FALSE;
+    }
+
+    if (ok && g_active.load(std::memory_order_relaxed) && s.cureEnabled) {
+        ok = RegisterHotKey(g_hwnd, HOTKEY_ID_CURE, MOD_NOREPEAT, static_cast<UINT>(s.cureHotkey)) != FALSE;
+    }
+
+    if (!ok) {
+        UnregisterRuntimeHotkeys();
+        if (showError) {
+            MessageBoxW(g_hwnd,
+                        L"Seçilen global tuşlardan biri Windows veya başka bir program tarafından kullanılıyor. Farklı bir Açma, Kapatma veya Cure tuşu seçin.",
+                        L"Global Tuş Ataması", MB_OK | MB_ICONWARNING);
+        }
+        return false;
+    }
+    return true;
+}
+
 void UpdateStateTitle() {
     if (!g_hwnd) return;
     SetWindowTextW(g_hwnd, g_active.load(std::memory_order_relaxed) ? L"Premium Plus Combo|ACTIVE" : L"Premium Plus Combo|READY");
@@ -163,7 +201,12 @@ void StartMacro() {
         g_cureRuns.store(0, std::memory_order_relaxed);
         g_startedTicks.store(QpcNow(), std::memory_order_relaxed);
         g_rSuppressUntil.store(0, std::memory_order_relaxed);
-        SetEvent(g_wakeEvent);
+        if (!RefreshRuntimeHotkeys(true)) {
+            g_active.store(false, std::memory_order_release);
+            RefreshRuntimeHotkeys(false);
+        } else {
+            SetEvent(g_wakeEvent);
+        }
     }
     UpdateStateTitle();
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
@@ -173,6 +216,7 @@ void StopMacro() {
     g_active.store(false, std::memory_order_release);
     ResetEvent(g_wakeEvent);
     g_rSuppressUntil.store(0, std::memory_order_relaxed);
+    RefreshRuntimeHotkeys(false); // keep only Start/Stop registered while idle
     UpdateStateTitle();
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
 }
@@ -193,6 +237,9 @@ bool CanAssignHotkey(CaptureTarget target, int vk, const Settings& s) {
     return false;
 }
 
+// This low-level hook exists ONLY for the short "Tuşa bas..." assignment window.
+// It is never installed during normal idle or macro operation, so normal typing
+// and generated combo events cannot be transformed by a permanent keyboard hook.
 LRESULT CALLBACK KeyboardProc(int code, WPARAM wp, LPARAM lp) {
     if (code != HC_ACTION || !lp) return CallNextHookEx(g_keyboardHook, code, wp, lp);
 
@@ -200,66 +247,25 @@ LRESULT CALLBACK KeyboardProc(int code, WPARAM wp, LPARAM lp) {
     const int vk = static_cast<int>(k->vkCode);
     if (vk <= 0 || vk >= 256) return CallNextHookEx(g_keyboardHook, code, wp, lp);
 
-    // Never react to this application's own generated combo/R/Cure keystrokes.
-    if ((k->flags & LLKHF_INJECTED) != 0 && k->dwExtraInfo == EXTRA_TAG) {
-        return CallNextHookEx(g_keyboardHook, code, wp, lp);
-    }
+    const bool down = wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN;
+    const bool up = wp == WM_KEYUP || wp == WM_SYSKEYUP;
+    const int swallowed = g_captureSwallowVk.load(std::memory_order_acquire);
 
-    const bool downMessage = wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN;
-    const bool upMessage = wp == WM_KEYUP || wp == WM_SYSKEYUP;
-    if (!downMessage && !upMessage) return CallNextHookEx(g_keyboardHook, code, wp, lp);
-
-    static std::array<bool, 256> physicalDown{};
-    static std::array<bool, 256> swallowUntilUp{};
-
-    if (upMessage) {
-        physicalDown[vk] = false;
-        if (swallowUntilUp[vk]) {
-            swallowUntilUp[vk] = false;
-            return 1;
+    if (swallowed != 0 && vk == swallowed) {
+        if (up) {
+            g_captureSwallowVk.store(0, std::memory_order_release);
+            HHOOK hook = g_keyboardHook;
+            g_keyboardHook = nullptr;
+            if (hook) UnhookWindowsHookEx(hook);
         }
-        return CallNextHookEx(g_keyboardHook, code, wp, lp);
-    }
-
-    const bool rising = !physicalDown[vk];
-    physicalDown[vk] = true;
-    if (!rising) {
-        if (swallowUntilUp[vk]) return 1;
-        return CallNextHookEx(g_keyboardHook, code, wp, lp);
+        return 1;
     }
 
     const CaptureTarget capture = static_cast<CaptureTarget>(g_captureTarget.load(std::memory_order_acquire));
-    if (capture != CaptureTarget::None) {
+    if (capture != CaptureTarget::None && down) {
         g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_release);
         g_captureSwallowVk.store(vk, std::memory_order_release);
-        swallowUntilUp[vk] = true;
         if (g_hwnd) PostMessageW(g_hwnd, WM_APP_CAPTURED_KEY, static_cast<WPARAM>(vk), static_cast<LPARAM>(capture));
-        return 1;
-    }
-
-    if (vk >= VK_F1 && vk <= VK_F8) {
-        g_currentBar.store(vk - VK_F1 + 1, std::memory_order_relaxed);
-    }
-
-    Settings s;
-    {
-        std::lock_guard<std::mutex> lk(g_settingsMutex);
-        s = g_settings;
-    }
-
-    const int action = ppc::hotkeyAction(vk, g_active.load(std::memory_order_relaxed), s);
-    if (action != 0) {
-        swallowUntilUp[vk] = true;
-        if (g_hwnd) PostMessageW(g_hwnd, WM_APP_HOTKEY_ACTION, static_cast<WPARAM>(action), 0);
-        return 1;
-    }
-
-    // Cure hotkey is completely transparent while the macro is stopped.
-    // This prevents ordinary typing (for example the letter C) from ever
-    // turning into Cure slot keys merely because the application is open.
-    if (g_active.load(std::memory_order_relaxed) && s.cureEnabled && vk == s.cureHotkey) {
-        swallowUntilUp[vk] = true;
-        if (g_hwnd) PostMessageW(g_hwnd, WM_APP_CURE_TRIGGER, 0, 0);
         return 1;
     }
 
