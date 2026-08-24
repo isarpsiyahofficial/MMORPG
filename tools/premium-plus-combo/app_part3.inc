@@ -13,7 +13,7 @@ void Panel(Graphics& g, RectF r, Color fill = Color(245, 250, 241, 226),
     g.DrawPath(&pen, &p);
 }
 
-void Button(Graphics& g, const RECT& rr, const wchar_t* text, Color c1, Color c2, bool selected = false) {
+void Button(Graphics& g, const RECT& rr, const std::wstring& text, Color c1, Color c2, bool selected = false) {
     RectF r(static_cast<REAL>(rr.left), static_cast<REAL>(rr.top),
             static_cast<REAL>(rr.right - rr.left), static_cast<REAL>(rr.bottom - rr.top));
     GraphicsPath p;
@@ -28,7 +28,7 @@ void Button(Graphics& g, const RECT& rr, const wchar_t* text, Color c1, Color c2
     g.FillPath(&br, &p);
     Pen pen(selected ? Color(255, 255, 205, 80) : Color(255, 158, 106, 30), selected ? 2.5f : 1.4f);
     g.DrawPath(&pen, &p);
-    DrawTextG(g, text, r.X, r.Y, r.Width, r.Height, 17, true, Color(255, 255, 248, 229), StringAlignmentCenter);
+    DrawTextG(g, text, r.X + 5, r.Y, r.Width - 10, r.Height, 15, true, Color(255, 255, 248, 229), StringAlignmentCenter);
 }
 
 void DrawModeCard(Graphics& g, const RECT& rr, bool turbo, bool selected) {
@@ -37,10 +37,10 @@ void DrawModeCard(Graphics& g, const RECT& rr, bool turbo, bool selected) {
     const Color fill = selected ? (turbo ? Color(250, 104, 18, 17) : Color(248, 111, 67, 19)) : Color(242, 248, 236, 216);
     const Color txt = selected ? Color(255, 255, 235, 164) : Color(255, 72, 43, 20);
     Panel(g, r, fill, selected ? Color(255, 246, 184, 60) : Color(255, 175, 129, 47), 10.0f);
-    DrawTextG(g, turbo ? L"Turbo Mod" : L"Maximum Mod", r.X + 12, r.Y + 7, r.Width - 38, 27, 17, true, txt);
-    DrawTextG(g, turbo ? L"Minor Hızı: yaklaşık 240/sn" : L"Minor Hızı: yaklaşık 120/sn",
-              r.X + 12, r.Y + 39, r.Width - 24, 24, 12, false, txt);
-    DrawTextG(g, L"i", r.GetRight() - 29, r.Y + 8, 20, 20, 13, true,
+    DrawTextG(g, turbo ? L"Turbo Mod" : L"Maximum Mod", r.X + 12, r.Y + 5, r.Width - 42, 26, 16, true, txt);
+    DrawTextG(g, turbo ? L"Minor: ~240 basım/sn (her tuş)" : L"Minor: ~120 basım/sn (her tuş)",
+              r.X + 10, r.Y + 34, r.Width - 20, 26, 11, false, txt, StringAlignmentCenter);
+    DrawTextG(g, L"i", r.GetRight() - 29, r.Y + 7, 20, 20, 13, true,
               selected ? Color(255, 255, 205, 77) : Color(255, 112, 70, 24), StringAlignmentCenter);
 }
 
@@ -70,7 +70,7 @@ void DrawPortraitBackground(Graphics& g, Bitmap* image, const Rect& dest) {
         1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 0.78f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.88f, 0.0f,
         0.0f, 0.0f, 0.0f, 0.0f, 1.0f
     };
     ImageAttributes attrs;
@@ -78,7 +78,7 @@ void DrawPortraitBackground(Graphics& g, Bitmap* image, const Rect& dest) {
 
     g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
     g.DrawImage(image, dest, sx, sy, cw, ch, UnitPixel, &attrs);
-    SolidBrush veil(Color(70, 248, 236, 212));
+    LinearGradientBrush veil(dest, Color(15, 248, 236, 212), Color(95, 248, 236, 212), LinearGradientModeVertical);
     g.FillRectangle(&veil, dest);
 }
 
@@ -101,6 +101,8 @@ void SaveRegistry() {
     dw(L"CureBar", s.cureBar);
     dw(L"CureSlot", s.cureSlot);
     dw(L"CureHotkey", s.cureHotkey);
+    dw(L"StartHotkey", s.startHotkey);
+    dw(L"StopHotkey", s.stopHotkey);
     RegCloseKey(key);
 }
 
@@ -125,6 +127,8 @@ void LoadRegistry() {
         s.cureBar = static_cast<int>(rd(L"CureBar", 2));
         s.cureSlot = static_cast<int>(rd(L"CureSlot", 6));
         s.cureHotkey = static_cast<int>(rd(L"CureHotkey", 'C'));
+        s.startHotkey = static_cast<int>(rd(L"StartHotkey", VK_CAPITAL));
+        s.stopHotkey = static_cast<int>(rd(L"StopHotkey", VK_CAPITAL));
         RegCloseKey(key);
     }
     s = ppc::sanitize(s);
@@ -176,8 +180,13 @@ bool ApplyControls(bool showError) {
     s.cureSlot = ComboBox_GetCurSel(hCureSlot) + 1;
     s = ppc::sanitize(s);
 
-    if (IsReservedCureKey(s.cureHotkey, s)) {
-        if (showError) MessageBoxW(g_hwnd, L"Cure tuşu giriş dizisi, R Combo, TAB veya Caps Lock ile çakışıyor. Cure için farklı bir tuş seçin.", L"Cure Tuşu", MB_OK | MB_ICONWARNING);
+    if (!CanAssignHotkey(CaptureTarget::Start, s.startHotkey, s) ||
+        !CanAssignHotkey(CaptureTarget::Stop, s.stopHotkey, s)) {
+        if (showError) MessageBoxW(g_hwnd, L"Açma/Kapatma tuşları giriş dizisi, R Combo veya Cure tuşuyla çakışamaz. Açma ve Kapatma tuşlarının birbiriyle aynı olması ise serbesttir.", L"Kontrol Tuşları", MB_OK | MB_ICONWARNING);
+        return false;
+    }
+    if (!CanAssignHotkey(CaptureTarget::Cure, s.cureHotkey, s)) {
+        if (showError) MessageBoxW(g_hwnd, L"Cure tuşu giriş dizisi, R Combo veya Açma/Kapatma tuşlarıyla çakışıyor. Cure için farklı bir tuş seçin.", L"Cure Tuşu", MB_OK | MB_ICONWARNING);
         return false;
     }
 
@@ -207,6 +216,8 @@ void SyncControls() {
     ComboBox_SetCurSel(hCureBar, s.cureBar - 1);
     ComboBox_SetCurSel(hCureSlot, s.cureSlot - 1);
     SetWindowTextW(hCureKey, VkName(s.cureHotkey).c_str());
+    SetWindowTextW(hStartKey, VkName(s.startHotkey).c_str());
+    SetWindowTextW(hStopKey, VkName(s.stopHotkey).c_str());
 }
 
 bool MakeChildControls(HWND w) {
@@ -223,22 +234,31 @@ bool MakeChildControls(HWND w) {
         if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
         return h;
     };
+    auto mkButton = [&](int id, const wchar_t* t, int x, int y, int ww, int hh) {
+        HWND h = CreateWindowExW(0, L"BUTTON", t, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                 x, y, ww, hh, w, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst, nullptr);
+        if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(g_fontBold), TRUE);
+        return h;
+    };
 
-    hSeq1 = mkEdit(1001, 330, 270, 60, 30);
-    hSeq2 = mkEdit(1002, 430, 270, 60, 30);
-    hSeq3 = mkEdit(1003, 530, 270, 60, 30);
-    hRCheck = mkCheck(1101, L"R Combo", 300, 358, 105, 28);
-    hRMax = mkEdit(1102, 475, 356, 58, 30, ES_NUMBER);
-    hRTurbo = mkEdit(1103, 615, 356, 58, 30, ES_NUMBER);
-    hCureCheck = mkCheck(1201, L"Cure Aktif", 300, 448, 110, 28);
+    hStartKey = mkButton(1301, L"CAPS LOCK", 365, 126, 110, 28);
+    hStopKey = mkButton(1302, L"CAPS LOCK", 575, 126, 110, 28);
+
+    hSeq1 = mkEdit(1001, 330, 293, 60, 30);
+    hSeq2 = mkEdit(1002, 430, 293, 60, 30);
+    hSeq3 = mkEdit(1003, 530, 293, 60, 30);
+    hRCheck = mkCheck(1101, L"R Combo", 300, 379, 105, 28);
+    hRMax = mkEdit(1102, 475, 377, 58, 30, ES_NUMBER);
+    hRTurbo = mkEdit(1103, 615, 377, 58, 30, ES_NUMBER);
+    hCureCheck = mkCheck(1201, L"Cure Al", 300, 458, 110, 28);
     hCureBar = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
-                               420, 446, 76, 190, w, reinterpret_cast<HMENU>(static_cast<INT_PTR>(1202)), inst, nullptr);
+                               420, 456, 76, 190, w, reinterpret_cast<HMENU>(static_cast<INT_PTR>(1202)), inst, nullptr);
     hCureSlot = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
-                                520, 446, 66, 190, w, reinterpret_cast<HMENU>(static_cast<INT_PTR>(1203)), inst, nullptr);
-    hCureKey = CreateWindowExW(0, L"BUTTON", L"C", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                               610, 445, 78, 31, w, reinterpret_cast<HMENU>(static_cast<INT_PTR>(1204)), inst, nullptr);
+                                520, 456, 66, 190, w, reinterpret_cast<HMENU>(static_cast<INT_PTR>(1203)), inst, nullptr);
+    hCureKey = mkButton(1204, L"C", 610, 455, 78, 31);
 
-    const std::array<HWND, 10> controls{{hSeq1, hSeq2, hSeq3, hRCheck, hRMax, hRTurbo, hCureCheck, hCureBar, hCureSlot, hCureKey}};
+    const std::array<HWND, 12> controls{{hSeq1, hSeq2, hSeq3, hRCheck, hRMax, hRTurbo,
+                                         hCureCheck, hCureBar, hCureSlot, hCureKey, hStartKey, hStopKey}};
     for (HWND h : controls) {
         if (!h || !IsWindow(h)) return false;
     }
@@ -250,7 +270,6 @@ bool MakeChildControls(HWND w) {
     SendMessageW(hRTurbo, EM_SETLIMITTEXT, 3, 0);
     SendMessageW(hCureBar, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
     SendMessageW(hCureSlot, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
-    SendMessageW(hCureKey, WM_SETFONT, reinterpret_cast<WPARAM>(g_fontBold), TRUE);
 
     for (int i = 1; i <= 8; ++i) {
         const std::wstring f = L"F" + std::to_wstring(i);
@@ -284,8 +303,10 @@ void DrawUi(HWND, HDC hdc) {
     LinearGradientBrush bg(Rect(0, 0, W, H), Color(255, 252, 246, 232), Color(255, 224, 196, 151), LinearGradientModeVertical);
     g.FillRectangle(&bg, 0, 0, W, H);
 
-    DrawPortraitBackground(g, g_karus.get(), Rect(0, 56, 255, 515));
-    DrawPortraitBackground(g, g_human.get(), Rect(725, 56, 255, 515));
+    // The supplied Rogue reference visuals are used as the actual side backgrounds.
+    // No separate KARUS/HUMAN labels or placeholder boxes are drawn.
+    DrawPortraitBackground(g, g_karus.get(), Rect(0, 55, 255, 515));
+    DrawPortraitBackground(g, g_human.get(), Rect(725, 55, 255, 515));
 
     Panel(g, RectF(255, 55, 470, 525), Color(238, 250, 241, 222), Color(255, 153, 98, 24), 12.0f);
     Pen outer(Color(255, 137, 85, 21), 2.0f);
@@ -298,34 +319,40 @@ void DrawUi(HWND, HDC hdc) {
     DrawTextG(g, L"—", 910, 12, 30, 30, 22, true, Color(255, 74, 43, 17), StringAlignmentCenter);
     DrawTextG(g, L"×", 945, 12, 30, 30, 23, true, Color(255, 74, 43, 17), StringAlignmentCenter);
 
-    DrawTextG(g, L"KARUS", 25, 532, 205, 28, 15, true, Color(255, 114, 20, 18), StringAlignmentCenter);
-    DrawTextG(g, L"HUMAN", 750, 532, 205, 28, 15, true, Color(255, 122, 73, 16), StringAlignmentCenter);
+    Settings s;
+    {
+        std::lock_guard<std::mutex> lk(g_settingsMutex);
+        s = g_settings;
+    }
 
-    Button(g, rcStart, L"Başlat  (TAB)", Color(255, 128, 78, 20), Color(255, 79, 41, 12), g_active.load(std::memory_order_relaxed));
-    Button(g, rcStop, L"Durdur  (Caps Lock)", Color(255, 151, 28, 26), Color(255, 91, 13, 18), !g_active.load(std::memory_order_relaxed));
+    Button(g, rcStart, L"Başlat (" + VkName(s.startHotkey) + L")", Color(255, 128, 78, 20), Color(255, 79, 41, 12), g_active.load(std::memory_order_relaxed));
+    Button(g, rcStop, L"Durdur (" + VkName(s.stopHotkey) + L")", Color(255, 151, 28, 26), Color(255, 91, 13, 18), !g_active.load(std::memory_order_relaxed));
 
-    DrawTextG(g, L"Mod Seçimi", 285, 121, 415, 23, 14, true, Color(255, 77, 44, 18), StringAlignmentCenter);
+    DrawTextG(g, L"Açma Tuşu", 285, 126, 76, 28, 11, true, Color(255, 76, 46, 25), StringAlignmentCenter);
+    DrawTextG(g, L"Kapatma Tuşu", 488, 126, 83, 28, 11, true, Color(255, 76, 46, 25), StringAlignmentCenter);
+
+    DrawTextG(g, L"Mod Seçimi", 285, 157, 415, 22, 14, true, Color(255, 77, 44, 18), StringAlignmentCenter);
     DrawModeCard(g, rcMax, false, g_mode.load(std::memory_order_relaxed) == Mode::Maximum);
     DrawModeCard(g, rcTurbo, true, g_mode.load(std::memory_order_relaxed) == Mode::Turbo);
 
-    Panel(g, RectF(275, 235, 435, 80), Color(235, 250, 242, 224), Color(255, 184, 136, 55), 8.0f);
-    DrawTextG(g, L"Giriş Dizisi", 290, 237, 130, 24, 14, true);
-    DrawTextG(g, L">", 398, 270, 22, 30, 18, true, Color(255, 116, 75, 24), StringAlignmentCenter);
-    DrawTextG(g, L">", 498, 270, 22, 30, 18, true, Color(255, 116, 75, 24), StringAlignmentCenter);
-    DrawTextG(g, L"Her tuş kendi hedef hızında tekrarlanır.", 600, 266, 98, 38, 10, false, Color(255, 83, 61, 38), StringAlignmentCenter);
+    Panel(g, RectF(275, 262, 435, 75), Color(235, 250, 242, 224), Color(255, 184, 136, 55), 8.0f);
+    DrawTextG(g, L"Giriş Dizisi", 290, 263, 130, 24, 14, true);
+    DrawTextG(g, L">", 398, 293, 22, 30, 18, true, Color(255, 116, 75, 24), StringAlignmentCenter);
+    DrawTextG(g, L">", 498, 293, 22, 30, 18, true, Color(255, 116, 75, 24), StringAlignmentCenter);
+    DrawTextG(g, L"Her tuş kendi hedef hızında tekrarlanır.", 600, 290, 98, 38, 10, false, Color(255, 83, 61, 38), StringAlignmentCenter);
 
-    Panel(g, RectF(275, 325, 435, 75), Color(235, 250, 242, 224), Color(255, 181, 132, 51), 8.0f);
-    DrawTextG(g, L"Rogue Ayarları", 290, 326, 140, 23, 14, true);
-    DrawTextG(g, L"Maximum R/sn", 452, 330, 105, 22, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
-    DrawTextG(g, L"Turbo R/sn", 592, 330, 105, 22, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
+    Panel(g, RectF(275, 345, 435, 69), Color(235, 250, 242, 224), Color(255, 181, 132, 51), 8.0f);
+    DrawTextG(g, L"Rogue Ayarları", 290, 346, 140, 23, 14, true);
+    DrawTextG(g, L"Maximum R/sn", 452, 351, 105, 20, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
+    DrawTextG(g, L"Turbo R/sn", 592, 351, 105, 20, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
 
-    Panel(g, RectF(275, 410, 435, 105), Color(235, 250, 242, 224), Color(255, 181, 132, 51), 8.0f);
-    DrawTextG(g, L"Cure Ayarları", 290, 411, 140, 23, 14, true);
-    DrawTextG(g, L"Bar", 418, 427, 78, 18, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
-    DrawTextG(g, L"Slot", 518, 427, 68, 18, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
-    DrawTextG(g, L"Cure Tuşu", 602, 427, 94, 18, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
-    DrawTextG(g, L"Cure alınırken R Combo 2 saniye durur; R kapalıysa program R'yi açmaz.",
-              295, 482, 405, 27, 10, false, Color(255, 91, 55, 28), StringAlignmentCenter);
+    Panel(g, RectF(275, 423, 435, 102), Color(235, 250, 242, 224), Color(255, 181, 132, 51), 8.0f);
+    DrawTextG(g, L"Cure Ayarları", 290, 424, 140, 23, 14, true);
+    DrawTextG(g, L"Bar", 418, 438, 78, 18, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
+    DrawTextG(g, L"Slot", 518, 438, 68, 18, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
+    DrawTextG(g, L"Cure Tuşu", 602, 438, 94, 18, 11, false, Color(255, 82, 53, 31), StringAlignmentCenter);
+    DrawTextG(g, L"Cure sırasında R Combo 2 saniye durur. R kapalıysa program R'yi açmaz.",
+              295, 490, 405, 26, 10, false, Color(255, 91, 55, 28), StringAlignmentCenter);
 
     Button(g, rcSave, L"Ayarlarımı Kaydet", Color(255, 136, 28, 21), Color(255, 82, 12, 15), false);
 
@@ -336,11 +363,6 @@ void DrawUi(HWND, HDC hdc) {
     DrawTextG(g, g_mode.load(std::memory_order_relaxed) == Mode::Turbo ? L"Mod: Turbo" : L"Mod: Maximum",
               215, 586, 160, 25, 11, true, Color(255, 91, 45, 17), StringAlignmentCenter);
 
-    Settings s;
-    {
-        std::lock_guard<std::mutex> lk(g_settingsMutex);
-        s = g_settings;
-    }
     const std::wstring combo = L"Combo: " + VkName(s.comboVk[0]) + L" > " + VkName(s.comboVk[1]) + L" > " + VkName(s.comboVk[2]);
     DrawTextG(g, combo, 390, 586, 195, 25, 11, true, Color(255, 84, 55, 28), StringAlignmentCenter);
     DrawTextG(g, L"Cure: F" + std::to_wstring(s.cureBar) + L" / " + std::to_wstring(s.cureSlot) + L" / " + VkName(s.cureHotkey),
