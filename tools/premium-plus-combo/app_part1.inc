@@ -32,10 +32,12 @@ namespace {
 constexpr int W = 980;
 constexpr int H = 620;
 constexpr UINT WM_APP_CAPTURED_KEY = WM_APP + 1;
-constexpr UINT WM_APP_HOTKEY_ACTION = WM_APP + 2;
-constexpr UINT WM_APP_CURE_TRIGGER = WM_APP + 3;
+constexpr UINT WM_APP_CURE_TRIGGER = WM_APP + 2;
 constexpr UINT_PTR TIMER_UI = 1;
 constexpr ULONG_PTR EXTRA_TAG = 0x5050434F4D424FULL;
+constexpr int HOTKEY_ID_START = 0x5101;
+constexpr int HOTKEY_ID_STOP  = 0x5102;
+constexpr int HOTKEY_ID_CURE  = 0x5103;
 
 enum class CaptureTarget : int { None = 0, Cure = 1, Start = 2, Stop = 3 };
 
@@ -46,7 +48,7 @@ HFONT g_font{}, g_fontBold{};
 ULONG_PTR g_gdiplusToken{};
 std::unique_ptr<Bitmap> g_karus;
 std::unique_ptr<Bitmap> g_human;
-HHOOK g_keyboardHook{};
+HHOOK g_keyboardHook{}; // installed only while assigning a new hotkey
 
 std::atomic<bool> g_quit{false};
 std::atomic<bool> g_active{false};
