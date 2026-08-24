@@ -54,6 +54,7 @@ std::atomic<bool> g_quit{false};
 std::atomic<bool> g_active{false};
 std::atomic<int> g_captureTarget{static_cast<int>(CaptureTarget::None)};
 std::atomic<int> g_captureSwallowVk{0};
+std::atomic<int> g_reservedCapsState{0};
 std::atomic<int> g_currentBar{1};
 std::atomic<long long> g_rSuppressUntil{0};
 std::atomic<bool> g_cureBusy{false};
