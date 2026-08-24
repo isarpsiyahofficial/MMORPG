@@ -31,9 +31,13 @@ using ppc::Settings;
 namespace {
 constexpr int W = 980;
 constexpr int H = 620;
-constexpr UINT WM_APP_CUREKEY = WM_APP + 1;
+constexpr UINT WM_APP_CAPTURED_KEY = WM_APP + 1;
+constexpr UINT WM_APP_HOTKEY_ACTION = WM_APP + 2;
+constexpr UINT WM_APP_CURE_TRIGGER = WM_APP + 3;
 constexpr UINT_PTR TIMER_UI = 1;
 constexpr ULONG_PTR EXTRA_TAG = 0x5050434F4D424FULL;
+
+enum class CaptureTarget : int { None = 0, Cure = 1, Start = 2, Stop = 3 };
 
 HWND g_hwnd{};
 HBRUSH g_brushCream{};
@@ -42,10 +46,12 @@ HFONT g_font{}, g_fontBold{};
 ULONG_PTR g_gdiplusToken{};
 std::unique_ptr<Bitmap> g_karus;
 std::unique_ptr<Bitmap> g_human;
+HHOOK g_keyboardHook{};
 
 std::atomic<bool> g_quit{false};
 std::atomic<bool> g_active{false};
-std::atomic<bool> g_captureCure{false};
+std::atomic<int> g_captureTarget{static_cast<int>(CaptureTarget::None)};
+std::atomic<int> g_captureSwallowVk{0};
 std::atomic<int> g_currentBar{1};
 std::atomic<long long> g_rSuppressUntil{0};
 std::atomic<bool> g_cureBusy{false};
@@ -62,16 +68,18 @@ std::mutex g_settingsMutex;
 HWND hSeq1{}, hSeq2{}, hSeq3{};
 HWND hRCheck{}, hRMax{}, hRTurbo{};
 HWND hCureCheck{}, hCureBar{}, hCureSlot{}, hCureKey{};
+HWND hStartKey{}, hStopKey{};
 
-RECT rcStart{300,70,485,120};
-RECT rcStop{500,70,685,120};
-RECT rcMax{285,145,475,220};
-RECT rcTurbo{510,145,700,220};
-RECT rcInfoMax{445,153,468,176};
-RECT rcInfoTurbo{670,153,693,176};
-RECT rcSave{390,535,590,575};
+RECT rcStart{300,64,485,114};
+RECT rcStop{500,64,685,114};
+RECT rcMax{285,180,475,250};
+RECT rcTurbo{510,180,700,250};
+RECT rcInfoMax{445,188,468,211};
+RECT rcInfoTurbo{670,188,693,211};
+RECT rcSave{390,538,590,576};
 RECT rcMin{910,15,940,43};
 RECT rcClose{945,15,975,43};
+RECT rcFooter{10,585,970,613};
 
 long long QpcNow() {
     LARGE_INTEGER v{};
@@ -103,9 +111,16 @@ std::wstring VkName(int vk) {
         case VK_CONTROL: return L"CTRL";
         case VK_MENU: return L"ALT";
         case VK_TAB: return L"TAB";
-        case VK_CAPITAL: return L"CAPS";
-        case VK_XBUTTON1: return L"MOUSE4";
-        case VK_XBUTTON2: return L"MOUSE5";
+        case VK_CAPITAL: return L"CAPS LOCK";
+        case VK_ESCAPE: return L"ESC";
+        case VK_RETURN: return L"ENTER";
+        case VK_BACK: return L"BACKSPACE";
+        case VK_INSERT: return L"INSERT";
+        case VK_DELETE: return L"DELETE";
+        case VK_HOME: return L"HOME";
+        case VK_END: return L"END";
+        case VK_PRIOR: return L"PAGE UP";
+        case VK_NEXT: return L"PAGE DOWN";
         default: return L"VK" + std::to_wstring(vk);
     }
 }
@@ -122,6 +137,8 @@ int ParseVk(std::wstring s) {
     if (s == L"SHIFT") return VK_SHIFT;
     if (s == L"CTRL" || s == L"CONTROL") return VK_CONTROL;
     if (s == L"ALT") return VK_MENU;
+    if (s == L"TAB") return VK_TAB;
+    if (s == L"CAPS" || s == L"CAPSLOCK") return VK_CAPITAL;
     return 0;
 }
 
