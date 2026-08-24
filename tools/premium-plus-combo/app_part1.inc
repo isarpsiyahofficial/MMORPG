@@ -33,8 +33,8 @@ constexpr int W = 980;
 constexpr int H = 620;
 constexpr UINT WM_APP_CAPTURED_KEY = WM_APP + 1;
 constexpr UINT WM_APP_CURE_TRIGGER = WM_APP + 2;
+constexpr UINT WM_APP_CONTROL_KEY = WM_APP + 3;
 constexpr UINT_PTR TIMER_UI = 1;
-constexpr UINT_PTR TIMER_CAPS_RESTORE = 2;
 constexpr ULONG_PTR EXTRA_TAG = 0x5050434F4D424FULL;
 constexpr int HOTKEY_ID_START = 0x5101;
 constexpr int HOTKEY_ID_STOP  = 0x5102;
@@ -50,12 +50,13 @@ ULONG_PTR g_gdiplusToken{};
 std::unique_ptr<Bitmap> g_karus;
 std::unique_ptr<Bitmap> g_human;
 HHOOK g_keyboardHook{}; // installed only while assigning a new hotkey
+HHOOK g_capsControlHook{}; // installed only when Caps Lock is an active control key
 
 std::atomic<bool> g_quit{false};
 std::atomic<bool> g_active{false};
 std::atomic<int> g_captureTarget{static_cast<int>(CaptureTarget::None)};
 std::atomic<int> g_captureSwallowVk{0};
-std::atomic<int> g_reservedCapsState{0};
+std::atomic<bool> g_capsPhysicalDown{false};
 std::atomic<int> g_currentBar{1};
 std::atomic<long long> g_rSuppressUntil{0};
 std::atomic<bool> g_cureBusy{false};
