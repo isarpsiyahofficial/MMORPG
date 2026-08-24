@@ -1,7 +1,7 @@
 #include "input_transport.hpp"
 
 // Route only the macro engine's synthetic keyboard output through the
-// DirectInput-compatible scan-code transport. UI/hotkey capture stays native.
+// DirectInput-compatible / official game-bridge transport. UI/hotkey capture stays native.
 #define SendInput ppc_input::SendInputScanCodeCompatible
 #include "app_part1.inc"
 
@@ -16,7 +16,9 @@
 
 #define MakeChildControls PpcLegacyMakeChildControls
 #define DrawUi PpcLegacyDrawUi
+#define LoadRegistry PpcLegacyLoadRegistry
 #include "app_part3.inc"
+#undef LoadRegistry
 #undef DrawUi
 #undef MakeChildControls
 
