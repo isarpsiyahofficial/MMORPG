@@ -284,6 +284,12 @@ bool MakeChildControls(HWND w) {
     // but it owns all mouse hits in that region while OFF.
     SetLayeredWindowAttributes(hPowerOverlay, 0, 210, LWA_ALPHA);
 
+    // WM_CREATE runs before CreateWindowExW returns, so g_hwnd is not assigned yet.
+    // Publish the authoritative power property directly on the parent HWND here.
+    SetPropW(w, L"PPC_POWER_ENABLED",
+             reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(
+                 g_powerEnabled.load(std::memory_order_acquire) ? 1ULL : 0ULL)));
+
     UpdatePowerVisualState();
     return true;
 }
