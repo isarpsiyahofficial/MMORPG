@@ -6,6 +6,11 @@ on:
     paths:
       - 'tools/premium-plus-combo/**'
       - '.github/workflows/test-premium-plus-game-visible-input.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'tools/premium-plus-combo/**'
+      - '.github/workflows/test-premium-plus-game-visible-input.yml'
   workflow_dispatch:
 
 concurrency:
@@ -19,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
 
       - uses: ilammy/msvc-dev-cmd@v1
@@ -64,7 +69,6 @@ jobs:
           function Click([IntPtr]$h,[int]$x,[int]$y) { $lp=(($y-band 0xffff)-shl 16)-bor($x-band 0xffff); [void][PpcInputProbe]::SendMessage($h,0x0202,[IntPtr]::Zero,[IntPtr]$lp) }
           function Sample([int]$intervalMs,[int]$durationMs) {
             $keys=@(0x38,0x39,0x30,0x52)
-            $names=@('8','9','0','R')
             $prev=@($false,$false,$false,$false)
             $count=@(0,0,0,0)
             $sw=[Diagnostics.Stopwatch]::StartNew()
