@@ -1,6 +1,6 @@
 void SendCombo(const std::array<int, 3>& keys, int repeats) {
-    repeats = std::clamp(repeats, 1, 4);
-    INPUT in[24]{};
+    repeats = std::clamp(repeats, 1, 8);
+    INPUT in[48]{};
     int count = 0;
     for (int r = 0; r < repeats; ++r) {
         for (int i = 0; i < 3; ++i) {
@@ -49,15 +49,16 @@ void ComboWorker() {
             s = g_settings;
         }
 
-        // A low-level global hotkey hook necessarily sees every SendInput keyboard
-        // event. Sending one 8>9>0 cycle per system call made Windows hook latency
-        // the limiting factor on some PCs. We therefore keep the requested average
-        // per-key rates while batching at a stable 60 scheduler ticks/second:
-        // Maximum = 2 cycles/tick = 120 presses/sec per key.
-        // Turbo   = 4 cycles/tick = 240 presses/sec per key.
+        // Windows must pass every generated keyboard event through the global
+        // control hook. On real Windows runners a single SendInput call can take
+        // close to one 30 Hz scheduling slice. To keep the *actual average* at
+        // the requested per-key rate without inflating the advertised target,
+        // generate several complete 8>9>0 cycles in each 30 Hz batch:
+        // Maximum = 4 cycles x 30 batches = 120 presses/sec per key.
+        // Turbo   = 8 cycles x 30 batches = 240 presses/sec per key.
         const int targetHz = ppc::minorRate(g_mode.load(std::memory_order_relaxed));
-        const int repeats = targetHz >= 240 ? 4 : 2;
-        const int schedulerHz = targetHz / repeats; // 60 for both modes
+        const int repeats = targetHz >= 240 ? 8 : 4;
+        constexpr int schedulerHz = 30;
         const long long step = std::max<long long>(1, freq / schedulerHz);
         if (!g_active.load(std::memory_order_relaxed)) continue;
 
