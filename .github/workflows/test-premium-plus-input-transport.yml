@@ -5,14 +5,17 @@ on:
     branches: [ premium-plus-combo ]
     paths:
       - 'tools/premium-plus-combo/input_transport.hpp'
+      - 'tools/premium-plus-combo/bridge_protocol.hpp'
+      - 'tools/premium-plus-combo/game_bridge_sdk.hpp'
       - 'tools/premium-plus-combo/transport_tests.cpp'
+      - 'tools/premium-plus-combo/bridge_tests.cpp'
       - 'tools/premium-plus-combo/main.cpp'
       - 'tools/premium-plus-combo/app.manifest'
       - '.github/workflows/test-premium-plus-input-transport.yml'
   workflow_dispatch:
 
 jobs:
-  scan-code-transport:
+  transport-and-official-bridge:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,16 +31,26 @@ jobs:
           cd tools\premium-plus-combo
           cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 transport_tests.cpp /Fe:TransportTests.exe user32.lib
           TransportTests.exe
-      - name: Verify production transport and elevation manifest
+      - name: Compile and run official game bridge tests
+        shell: cmd
+        run: |
+          cd tools\premium-plus-combo
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 bridge_tests.cpp /Fe:BridgeTests.exe user32.lib
+          BridgeTests.exe
+      - name: Verify production transport, bridge and elevation manifest
         shell: pwsh
         run: |
           cd tools/premium-plus-combo
           $main = Get-Content main.cpp -Raw
           $transport = Get-Content input_transport.hpp -Raw
+          $bridge = Get-Content game_bridge_sdk.hpp -Raw
           $manifest = Get-Content app.manifest -Raw
-          if ($main -notmatch 'SendInputScanCodeCompatible') { throw 'Production macro engine is not routed through scan-code transport' }
+          if ($main -notmatch 'SendInputScanCodeCompatible') { throw 'Production macro engine is not routed through compatibility transport' }
+          if ($transport -notmatch 'PublishBridgeBatch') { throw 'Official game bridge output missing' }
           if ($transport -notmatch 'MAPVK_VK_TO_VSC_EX') { throw 'Extended scan-code mapping missing' }
           if ($transport -notmatch 'KEYEVENTF_SCANCODE') { throw 'KEYEVENTF_SCANCODE missing' }
+          if ($bridge -notmatch 'DrainKeyTaps') { throw 'Game-side bridge receiver missing' }
           if ($manifest -notmatch 'requireAdministrator') { throw 'Administrator integrity manifest missing' }
-          'DirectInputTransport=PASS'
-          'RatesPreserved=Maximum120PerKey,Turbo240PerKey'
+          'DirectInputFallback=PASS'
+          'OfficialGameBridge=PASS'
+          'RatesPreserved=Maximum120PerKey,Turbo240PerKey,R25or40'
