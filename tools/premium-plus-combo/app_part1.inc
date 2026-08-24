@@ -34,6 +34,7 @@ constexpr int H = 620;
 constexpr UINT WM_APP_CAPTURED_KEY = WM_APP + 1;
 constexpr UINT WM_APP_CURE_TRIGGER = WM_APP + 2;
 constexpr UINT_PTR TIMER_UI = 1;
+constexpr UINT_PTR TIMER_CAPS_RESTORE = 2;
 constexpr ULONG_PTR EXTRA_TAG = 0x5050434F4D424FULL;
 constexpr int HOTKEY_ID_START = 0x5101;
 constexpr int HOTKEY_ID_STOP  = 0x5102;
