@@ -25,6 +25,26 @@ HWND CaptureButton(CaptureTarget target) {
     return nullptr;
 }
 
+void HandleControlAction(int id) {
+    if (id == HOTKEY_ID_START) {
+        Settings s;
+        {
+            std::lock_guard<std::mutex> lk(g_settingsMutex);
+            s = g_settings;
+        }
+        if (s.startHotkey == s.stopHotkey && g_active.load(std::memory_order_relaxed)) StopMacro();
+        else StartMacro();
+        return;
+    }
+    if (id == HOTKEY_ID_STOP) {
+        StopMacro();
+        return;
+    }
+    if (id == HOTKEY_ID_CURE) {
+        if (g_active.load(std::memory_order_relaxed)) std::thread(CureWorker).detach();
+    }
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
@@ -132,13 +152,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
 
-            // The capture hook consumes the assignment keystroke. Therefore this
-            // snapshot is the real user Caps Lock state before Caps becomes a
-            // reserved program control.
-            if (vk == VK_CAPITAL) {
-                g_reservedCapsState.store(GetKeyState(VK_CAPITAL) & 1, std::memory_order_relaxed);
-            }
-
             {
                 std::lock_guard<std::mutex> lk(g_settingsMutex);
                 if (target == CaptureTarget::Cure) g_settings.cureHotkey = vk;
@@ -152,47 +165,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
-        case WM_HOTKEY: {
-            Settings s;
-            {
-                std::lock_guard<std::mutex> lk(g_settingsMutex);
-                s = g_settings;
-            }
+        case WM_HOTKEY:
+            HandleControlAction(static_cast<int>(wp));
+            return 0;
 
-            if (static_cast<int>(wp) == HOTKEY_ID_START) {
-                const bool capsControl = s.startHotkey == VK_CAPITAL;
-                if (s.startHotkey == s.stopHotkey && g_active.load(std::memory_order_relaxed)) StopMacro();
-                else StartMacro();
-                // WM_HOTKEY arrives on key-down; Caps state flips after the
-                // physical key is released. Restore it shortly afterwards.
-                if (capsControl) SetTimer(hwnd, TIMER_CAPS_RESTORE, 100, nullptr);
-                return 0;
-            }
-            if (static_cast<int>(wp) == HOTKEY_ID_STOP) {
-                const bool capsControl = s.stopHotkey == VK_CAPITAL;
-                StopMacro();
-                if (capsControl) SetTimer(hwnd, TIMER_CAPS_RESTORE, 100, nullptr);
-                return 0;
-            }
-            if (static_cast<int>(wp) == HOTKEY_ID_CURE) {
-                const bool capsControl = s.cureHotkey == VK_CAPITAL;
-                if (g_active.load(std::memory_order_relaxed)) std::thread(CureWorker).detach();
-                if (capsControl) SetTimer(hwnd, TIMER_CAPS_RESTORE, 100, nullptr);
-                return 0;
-            }
-            break;
-        }
+        case WM_APP_CONTROL_KEY:
+            HandleControlAction(static_cast<int>(wp));
+            return 0;
 
         case WM_APP_CURE_TRIGGER:
             if (g_active.load(std::memory_order_relaxed)) std::thread(CureWorker).detach();
             return 0;
 
         case WM_TIMER:
-            if (wp == TIMER_CAPS_RESTORE) {
-                KillTimer(hwnd, TIMER_CAPS_RESTORE);
-                RestoreReservedCapsState();
-                return 0;
-            }
             if (wp == TIMER_UI) {
                 UpdateDiagnosticMarkers();
                 // The whole window is never continuously repainted. Only the tiny
@@ -257,7 +242,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_active.store(false, std::memory_order_release);
             if (g_wakeEvent) SetEvent(g_wakeEvent);
             KillTimer(hwnd, TIMER_UI);
-            KillTimer(hwnd, TIMER_CAPS_RESTORE);
             PostQuitMessage(0);
             return 0;
     }
@@ -299,8 +283,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     g_rSuppressUntil.store(0, std::memory_order_relaxed);
     g_startedTicks.store(0, std::memory_order_relaxed);
     g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_relaxed);
+    g_capsPhysicalDown.store(false, std::memory_order_relaxed);
     LoadRegistry();
-    g_reservedCapsState.store(GetKeyState(VK_CAPITAL) & 1, std::memory_order_relaxed);
 
     g_karus = LoadImageResource(IDR_KARUS);
     g_human = LoadImageResource(IDR_HUMAN);
@@ -374,8 +358,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
         return 2;
     }
 
-    // Register only the selected control keys. No persistent keyboard hook is
-    // active during normal use, so simply opening the app cannot alter typing.
+    // Ordinary Start/Stop/Cure controls use RegisterHotKey. Caps Lock is handled
+    // by a Caps-only hook so it can act as the requested default control without
+    // changing Windows' Caps Lock typing mode. No other key is remapped.
     if (!RefreshRuntimeHotkeys(true)) {
         DestroyWindow(g_hwnd);
         CloseHandle(g_wakeEvent);
