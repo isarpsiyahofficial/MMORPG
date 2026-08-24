@@ -12,10 +12,11 @@ void BeginCapture(CaptureTarget target, HWND button) {
         g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_release);
         SyncControls();
         RefreshRuntimeHotkeys(false);
-        MessageBoxW(g_hwnd, L"Tuş atama ekranı başlatılamadı.", L"Premium Plus Combo", MB_OK | MB_ICONERROR);
+        MessageBoxW(g_hwnd, L"Tu\u015F atama ekran\u0131 ba\u015Flat\u0131lamad\u0131.",
+                    L"Premium Plus Combo", MB_OK | MB_ICONERROR);
         return;
     }
-    SetWindowTextW(button, L"Tuşa bas...");
+    SetWindowTextW(button, L"Tu\u015Fa bas...");
 }
 
 HWND CaptureButton(CaptureTarget target) {
@@ -49,18 +50,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
             if (!MakeChildControls(hwnd)) {
-                MessageBoxW(hwnd, L"Arayüz kontrolleri oluşturulamadı. Program başlatılmadı.", L"Premium Plus Combo", MB_OK | MB_ICONERROR);
+                MessageBoxW(hwnd, L"Aray\u00FCz kontrolleri olu\u015Fturulamad\u0131. Program ba\u015Flat\u0131lmad\u0131.",
+                            L"Premium Plus Combo", MB_OK | MB_ICONERROR);
                 return -1;
             }
-            SetPropW(hwnd, L"PPC_CONTROLS", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(12)));
-            SetTimer(hwnd, TIMER_UI, 500, nullptr);
+            SetPropW(hwnd, L"PPC_CONTROLS", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(13)));
+            UpdateDiagnosticMarkers();
             return 0;
         }
 
         case WM_NCHITTEST: {
             POINT p{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
             ScreenToClient(hwnd, &p);
-            if (p.y < 55 && !PtIn(rcMin, p.x, p.y) && !PtIn(rcClose, p.x, p.y)) return HTCAPTION;
+            if (p.y < 50 && !PtIn(rcMin, p.x, p.y) && !PtIn(rcClose, p.x, p.y)) return HTCAPTION;
             return HTCLIENT;
         }
 
@@ -85,10 +87,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             if (PtIn(rcInfoMax, x, y) || PtIn(rcInfoTurbo, x, y)) {
                 MessageBoxW(hwnd,
-                            L"120/sn ve 240/sn değerleri, giriş dizisindeki HER BİR tuşun bir saniyedeki yaklaşık basılma hedefini ifade eder.\n\n"
-                            L"Örnek: 8 > 9 > 0 dizisinde Maximum Mod seçiliyken 8, 9 ve 0 tuşlarının her biri yaklaşık 120 basım/sn hedefiyle gönderilir. Turbo Modda bu hedef yaklaşık 240 basım/sn olur.\n\n"
-                            L"R hızı bu değerlerden bağımsızdır; Rogue Ayarları bölümündeki Maximum R/sn ve Turbo R/sn alanlarından belirlenir.",
-                            L"Hız Bilgisi", MB_OK | MB_ICONINFORMATION);
+                            L"120/sn ve 240/sn de\u011Ferleri giri\u015F dizisindeki HER B\u0130R tu\u015Fun saniyedeki yakla\u015F\u0131k bas\u0131lma hedefidir.\n\n"
+                            L"8 > 9 > 0 dizisinde Maximum Mod se\u00E7iliyken 8, 9 ve 0 tu\u015Flar\u0131n\u0131n her biri yakla\u015F\u0131k 120 bas\u0131m/sn; Turbo Modda yakla\u015F\u0131k 240 bas\u0131m/sn hedefiyle g\u00F6nderilir.\n\n"
+                            L"R h\u0131z\u0131 ayr\u0131d\u0131r ve Rogue Ayarlar\u0131 b\u00F6l\u00FCm\u00FCnden belirlenir.",
+                            L"H\u0131z Bilgisi", MB_OK | MB_ICONINFORMATION);
                 return 0;
             }
             if (PtIn(rcMax, x, y)) {
@@ -107,7 +109,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (ApplyControls(true) && RefreshRuntimeHotkeys(true)) {
                     SaveRegistry();
                     MessageBoxW(hwnd,
-                                L"Ayarlar kaydedildi. Giriş dizisi, Açma/Kapatma tuşları, R Combo ve Cure ayarları sonraki açılışta geri yüklenir. Program her açılışta kapalı ve Maximum Mod hazır durumda başlar.",
+                                L"Ayarlar kaydedildi. Giri\u015F dizisi, A\u00E7ma/Kapatma tu\u015Flar\u0131, R Combo ve Cure ayarlar\u0131 sonraki a\u00E7\u0131l\u0131\u015Fta geri y\u00FCklenir.",
                                 L"Premium Plus Combo", MB_OK | MB_ICONINFORMATION);
                 }
                 return 0;
@@ -146,9 +148,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 RefreshRuntimeHotkeys(false);
                 MessageBoxW(hwnd,
                             target == CaptureTarget::Cure
-                                ? L"Bu tuş giriş dizisi, R Combo veya Açma/Kapatma tuşlarından biri tarafından kullanılıyor. Cure için farklı bir tuş seçin."
-                                : L"Bu tuş giriş dizisi, R Combo veya Cure tarafından kullanılıyor. Açma/Kapatma için farklı bir tuş seçin. Açma ve Kapatma tuşlarının birbirleriyle aynı olması serbesttir.",
-                            L"Tuş Atama", MB_OK | MB_ICONWARNING);
+                                ? L"Bu tu\u015F giri\u015F dizisi, R Combo veya A\u00E7ma/Kapatma tu\u015Flar\u0131ndan biri taraf\u0131ndan kullan\u0131l\u0131yor."
+                                : L"Bu tu\u015F giri\u015F dizisi, R Combo veya Cure taraf\u0131ndan kullan\u0131l\u0131yor.",
+                            L"Tu\u015F Atama", MB_OK | MB_ICONWARNING);
                 return 0;
             }
 
@@ -176,16 +178,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_APP_CURE_TRIGGER:
             if (g_active.load(std::memory_order_relaxed)) std::thread(CureWorker).detach();
             return 0;
-
-        case WM_TIMER:
-            if (wp == TIMER_UI) {
-                UpdateDiagnosticMarkers();
-                // The whole window is never continuously repainted. Only the tiny
-                // footer is refreshed while active for elapsed time/status.
-                if (g_active.load(std::memory_order_relaxed)) InvalidateRect(hwnd, &rcFooter, FALSE);
-                return 0;
-            }
-            break;
 
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLOREDIT:
@@ -222,6 +214,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (bmp) DeleteObject(bmp);
             if (mem) DeleteDC(mem);
             EndPaint(hwnd, &ps);
+            g_paintCount.fetch_add(1, std::memory_order_relaxed);
+            UpdateDiagnosticMarkers();
             return 0;
         }
 
@@ -232,6 +226,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RemovePropW(hwnd, L"PPC_COMBO_BURSTS");
             RemovePropW(hwnd, L"PPC_R_PRESSES");
             RemovePropW(hwnd, L"PPC_CURE_RUNS");
+            RemovePropW(hwnd, L"PPC_PAINTS");
             UnregisterRuntimeHotkeys();
             g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_release);
             if (g_keyboardHook) {
@@ -241,7 +236,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_quit.store(true, std::memory_order_release);
             g_active.store(false, std::memory_order_release);
             if (g_wakeEvent) SetEvent(g_wakeEvent);
-            KillTimer(hwnd, TIMER_UI);
             PostQuitMessage(0);
             return 0;
     }
@@ -261,13 +255,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
     g_brushCream = CreateSolidBrush(RGB(245, 235, 214));
     g_brushInput = CreateSolidBrush(RGB(252, 247, 237));
-    g_font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+    g_font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    g_fontBold = CreateFontW(-16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+    g_fontBold = CreateFontW(-15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
 
     if (!g_brushCream || !g_brushInput || !g_font || !g_fontBold) {
-        MessageBoxW(nullptr, L"Arayüz kaynakları oluşturulamadı.", L"Premium Plus Combo", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, L"Aray\u00FCz kaynaklar\u0131 olu\u015Fturulamad\u0131.", L"Premium Plus Combo", MB_OK | MB_ICONERROR);
         if (g_font) DeleteObject(g_font);
         if (g_fontBold) DeleteObject(g_fontBold);
         if (g_brushCream) DeleteObject(g_brushCream);
@@ -284,13 +278,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     g_startedTicks.store(0, std::memory_order_relaxed);
     g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_relaxed);
     g_capsPhysicalDown.store(false, std::memory_order_relaxed);
+    g_paintCount.store(0, std::memory_order_relaxed);
     LoadRegistry();
 
     g_karus = LoadImageResource(IDR_KARUS);
     g_human = LoadImageResource(IDR_HUMAN);
     if (!g_karus || !g_human) {
         MessageBoxW(nullptr,
-                    L"Gömülü Rogue arka plan görselleri yüklenemedi. Program hatalı görünmemesi için başlatılmadı.",
+                    L"G\u00F6m\u00FCl\u00FC Rogue g\u00F6rselleri y\u00FCklenemedi. Program ba\u015Flat\u0131lmad\u0131.",
                     L"Premium Plus Combo", MB_OK | MB_ICONERROR);
         g_karus.reset();
         g_human.reset();
@@ -305,7 +300,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
     g_wakeEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!g_wakeEvent) {
-        MessageBoxW(nullptr, L"Çalışma motoru başlatılamadı.", L"Premium Plus Combo", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, L"\u00C7al\u0131\u015Fma motoru ba\u015Flat\u0131lamad\u0131.", L"Premium Plus Combo", MB_OK | MB_ICONERROR);
         g_karus.reset();
         g_human.reset();
         DeleteObject(g_font);
@@ -343,7 +338,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     const int sx = (GetSystemMetrics(SM_CXSCREEN) - W) / 2;
     const int sy = (GetSystemMetrics(SM_CYSCREEN) - H) / 2;
     g_hwnd = CreateWindowExW(WS_EX_APPWINDOW, L"PremiumPlusComboWindow", L"Premium Plus Combo|READY",
-                             WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, sx, sy, W, H, nullptr, nullptr, hInst, nullptr);
+                             WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+                             sx, sy, W, H, nullptr, nullptr, hInst, nullptr);
     if (!g_hwnd) {
         CloseHandle(g_wakeEvent);
         g_wakeEvent = nullptr;
@@ -358,9 +354,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
         return 2;
     }
 
-    // Ordinary Start/Stop/Cure controls use RegisterHotKey. Caps Lock is handled
-    // by a Caps-only hook so it can act as the requested default control without
-    // changing Windows' Caps Lock typing mode. No other key is remapped.
     if (!RefreshRuntimeHotkeys(true)) {
         DestroyWindow(g_hwnd);
         CloseHandle(g_wakeEvent);
