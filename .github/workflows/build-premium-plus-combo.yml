@@ -60,7 +60,7 @@ jobs:
           foreach ($bad in @('Ã','Â','Ä','Å','â€','�')) {
             if ($all.Contains($bad)) { throw "Mojibake marker '$bad' found in source" }
           }
-          foreach ($required in @('Başlat','Durdur','Giriş Dizisi','Ayarlarımı Kaydet','Çalışıyor','Tuşa bas','Cure Ayarları','R Combo')) {
+          foreach ($required in @('Başlat','Durdur','Giriş Dizisi','Ayarlarımı Kaydet','Çalışıyor','Tuşa bas','Cure Ayarları','R Combo','Açma Tuşu','Kapatma Tuşu','CAPS LOCK')) {
             if (-not $all.Contains($required)) { throw "Required Turkish UI text missing: $required" }
           }
           'UTF8TurkishAudit=PASS' | Set-Content -Encoding ascii encoding-audit.txt
@@ -119,14 +119,10 @@ jobs:
               public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
               [DllImport("user32.dll")]
               public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-              [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-              public static extern int GetClassName(IntPtr hWnd, StringBuilder text, int maxCount);
               [DllImport("user32.dll")]
               public static extern IntPtr GetDlgItem(IntPtr hWnd, int id);
               [DllImport("user32.dll")]
               public static extern bool IsWindowVisible(IntPtr hWnd);
-              [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-              public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
               [DllImport("user32.dll")]
               public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
               [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
@@ -137,6 +133,8 @@ jobs:
               public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
               [DllImport("user32.dll")]
               public static extern bool SetForegroundWindow(IntPtr hWnd);
+              [DllImport("user32.dll")]
+              public static extern short GetKeyState(int vk);
 
               public static IntPtr FindProcessMainWindow(uint wantedPid) {
                   IntPtr preferred = IntPtr.Zero;
@@ -148,7 +146,7 @@ jobs:
                       if (pid != wantedPid) return true;
                       if (anyFallback == IntPtr.Zero) anyFallback = hWnd;
                       if (IsWindowVisible(hWnd) && visibleFallback == IntPtr.Zero) visibleFallback = hWnd;
-                      if (GetDlgItem(hWnd, 1001) != IntPtr.Zero && GetDlgItem(hWnd, 1204) != IntPtr.Zero) {
+                      if (GetDlgItem(hWnd, 1001) != IntPtr.Zero && GetDlgItem(hWnd, 1302) != IntPtr.Zero) {
                           preferred = hWnd;
                           return false;
                       }
@@ -180,13 +178,13 @@ jobs:
               [Win32PpcTest]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
               Start-Sleep -Milliseconds 70
               [Win32PpcTest]::keybd_event($vk, 0, 2, [UIntPtr]::Zero)
-              Start-Sleep -Milliseconds 90
+              Start-Sleep -Milliseconds 120
           }
           function Capture-Ui([IntPtr]$handle, [string]$path) {
               $bmp = New-Object System.Drawing.Bitmap 980,620
               $graphics = [System.Drawing.Graphics]::FromImage($bmp)
               $hdc = $graphics.GetHdc()
-              $ok = [Win32PpcTest]::PrintWindow($handle, $hdc, 2)
+              $ok = [Win32PpcTest]::PrintWindow($handle, $hdc, 0)
               $graphics.ReleaseHdc($hdc)
               $graphics.Dispose()
               if (-not $ok) { $bmp.Dispose(); throw 'PrintWindow failed' }
@@ -212,7 +210,7 @@ jobs:
           "InitialInactive=PASS" | Add-Content build-info.txt
           "InitialMaximumMode=PASS" | Add-Content build-info.txt
 
-          $ids = @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204)
+          $ids = @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302)
           foreach ($id in $ids) {
               $c = Get-Control $handle $id
               if ($c -eq [IntPtr]::Zero) { throw "Missing control id=$id" }
@@ -222,24 +220,77 @@ jobs:
           if ((Get-Text (Get-Control $handle 1002)) -ne '9') { throw 'Sequence key 2 is not 9' }
           if ((Get-Text (Get-Control $handle 1003)) -ne '0') { throw 'Sequence key 3 is not 0' }
           if ((Get-Text (Get-Control $handle 1204)) -ne 'C') { throw 'Default Cure key is not C' }
+          if ((Get-Text (Get-Control $handle 1301)) -ne 'CAPS LOCK') { throw 'Default Start key is not Caps Lock' }
+          if ((Get-Text (Get-Control $handle 1302)) -ne 'CAPS LOCK') { throw 'Default Stop key is not Caps Lock' }
           if ([Win32PpcTest]::SendMessage((Get-Control $handle 1101), 0x00F0, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -ne 1) { throw 'R Combo is not enabled by default' }
           if ([Win32PpcTest]::SendMessage((Get-Control $handle 1201), 0x00F0, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -ne 1) { throw 'Cure is not enabled by default' }
           if ([Win32PpcTest]::SendMessage((Get-Control $handle 1202), 0x0147, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -ne 1) { throw 'Default Cure bar is not F2' }
           if ([Win32PpcTest]::SendMessage((Get-Control $handle 1203), 0x0147, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -ne 5) { throw 'Default Cure slot is not 6' }
-          "VisibleControls=PASS(10/10)" | Add-Content build-info.txt
+          "VisibleControls=PASS(12/12)" | Add-Content build-info.txt
           "DefaultSettings=PASS" | Add-Content build-info.txt
 
           Capture-Ui $handle 'ui-initial.png'
           if ((Get-Item ui-initial.png).Length -lt 20000) { throw 'Initial UI capture is unexpectedly small' }
 
+          # Idle keyboard isolation: Cure key must be ordinary C while stopped and
+          # absolutely no macro worker may emit input merely because the app is open.
+          Press-Key 0x43
+          Start-Sleep -Milliseconds 300
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Program activated while testing idle C key' }
+          if ((Get-PropValue $handle 'PPC_CURE_RUNS') -ne 0) { throw 'Cure triggered while program was stopped' }
+          if ((Get-PropValue $handle 'PPC_COMBO_BURSTS') -ne 0 -or (Get-PropValue $handle 'PPC_R_PRESSES') -ne 0) { throw 'Macro output occurred while program was stopped' }
+          "IdleKeyboardIsolation=PASS" | Add-Content build-info.txt
+
+          # Default control setup uses one Caps Lock key as a start/stop toggle.
+          # The hook consumes it, so Windows Caps Lock mode itself must not flip.
+          $capsBefore = [Win32PpcTest]::GetKeyState(0x14) -band 1
+          Press-Key 0x14
+          Start-Sleep -Milliseconds 500
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'First Caps Lock press did not start the macro' }
+          $capsAfterStart = [Win32PpcTest]::GetKeyState(0x14) -band 1
+          if ($capsAfterStart -ne $capsBefore) { throw 'Caps Lock hotkey changed Windows Caps Lock typing mode' }
+          Press-Key 0x14
+          Start-Sleep -Milliseconds 350
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Second Caps Lock press did not stop the macro' }
+          $capsAfterStop = [Win32PpcTest]::GetKeyState(0x14) -band 1
+          if ($capsAfterStop -ne $capsBefore) { throw 'Caps Lock typing mode changed after stop' }
+          "CapsToggleStartStop=PASS" | Add-Content build-info.txt
+          "CapsStateIsolation=PASS" | Add-Content build-info.txt
+
+          # Start and stop assignments must also work independently.
+          [void][Win32PpcTest]::SendMessage((Get-Control $handle 1301), 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+          Start-Sleep -Milliseconds 100
+          Press-Key 0x78
+          if ((Get-Text (Get-Control $handle 1301)) -ne 'F9') { throw 'Start hotkey capture did not assign F9' }
+          [void][Win32PpcTest]::SendMessage((Get-Control $handle 1302), 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+          Start-Sleep -Milliseconds 100
+          Press-Key 0x79
+          if ((Get-Text (Get-Control $handle 1302)) -ne 'F10') { throw 'Stop hotkey capture did not assign F10' }
+          Press-Key 0x78
+          Start-Sleep -Milliseconds 450
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'Independent F9 start hotkey failed' }
+          Press-Key 0x79
+          Start-Sleep -Milliseconds 350
+          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Independent F10 stop hotkey failed' }
+          "IndependentHotkeys=PASS(F9/F10)" | Add-Content build-info.txt
+
+          # Restore the requested default Caps/Caps setup for the release screenshot.
+          [void][Win32PpcTest]::SendMessage((Get-Control $handle 1301), 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+          Start-Sleep -Milliseconds 100
+          Press-Key 0x14
+          [void][Win32PpcTest]::SendMessage((Get-Control $handle 1302), 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+          Start-Sleep -Milliseconds 100
+          Press-Key 0x14
+          if ((Get-Text (Get-Control $handle 1301)) -ne 'CAPS LOCK' -or (Get-Text (Get-Control $handle 1302)) -ne 'CAPS LOCK') { throw 'Could not restore default Caps Lock assignments' }
+
           # Start button + Maximum-mode workers.
-          Click-Client $handle 392 95
+          Click-Client $handle 392 90
           Start-Sleep -Milliseconds 1000
           if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'Start button did not activate the program' }
           $combo = Get-PropValue $handle 'PPC_COMBO_BURSTS'
           $r = Get-PropValue $handle 'PPC_R_PRESSES'
-          if ($combo -lt 75 -or $combo -gt 180) { throw "Maximum combo rate is outside safe acceptance range; bursts=$combo" }
-          if ($r -lt 12 -or $r -gt 50) { throw "Maximum R rate is outside safe acceptance range; presses=$r" }
+          if ($combo -lt 75 -or $combo -gt 180) { throw "Maximum combo rate is outside acceptance range; bursts=$combo" }
+          if ($r -lt 12 -or $r -gt 50) { throw "Maximum R rate is outside acceptance range; presses=$r" }
           "StartButton=PASS" | Add-Content build-info.txt
           "MaximumMinorRate=PASS($combo bursts/sec)" | Add-Content build-info.txt
           "MaximumRRate=PASS($r presses/sec)" | Add-Content build-info.txt
@@ -261,7 +312,7 @@ jobs:
           "CureRPauseResume=PASS" | Add-Content build-info.txt
 
           # Stop button must halt all workers.
-          Click-Client $handle 592 95
+          Click-Client $handle 592 90
           Start-Sleep -Milliseconds 250
           if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Stop button did not stop the program' }
           $stoppedCombo1 = Get-PropValue $handle 'PPC_COMBO_BURSTS'
@@ -277,7 +328,7 @@ jobs:
 
           # Cure may not enable R if user disabled R Combo.
           [void][Win32PpcTest]::SendMessage((Get-Control $handle 1101), 0x00F1, [IntPtr]0, [IntPtr]::Zero)
-          Click-Client $handle 392 95
+          Click-Client $handle 392 90
           Start-Sleep -Milliseconds 450
           if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'Program did not start with R disabled' }
           if ((Get-PropValue $handle 'PPC_R_PRESSES') -ne 0) { throw 'R fired while R Combo was disabled' }
@@ -285,32 +336,22 @@ jobs:
           Start-Sleep -Milliseconds 500
           if ((Get-PropValue $handle 'PPC_CURE_RUNS') -lt 1) { throw 'Cure did not run while R Combo was disabled' }
           if ((Get-PropValue $handle 'PPC_R_PRESSES') -ne 0) { throw 'Cure incorrectly enabled R while R Combo was disabled' }
-          Click-Client $handle 592 95
+          Click-Client $handle 592 90
           Start-Sleep -Milliseconds 250
           [void][Win32PpcTest]::SendMessage((Get-Control $handle 1101), 0x00F1, [IntPtr]1, [IntPtr]::Zero)
           "CureRespectsRDisabled=PASS" | Add-Content build-info.txt
 
-          # Global hotkeys.
-          Press-Key 0x09
-          Start-Sleep -Milliseconds 450
-          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 1) { throw 'TAB global start did not activate the program' }
-          Press-Key 0x14
-          Start-Sleep -Milliseconds 450
-          if ((Get-PropValue $handle 'PPC_ACTIVE') -ne 0) { throw 'Caps Lock global stop did not stop the program' }
-          "TabGlobalStart=PASS" | Add-Content build-info.txt
-          "CapsGlobalStop=PASS" | Add-Content build-info.txt
-
           # Mode buttons and Turbo worker speed.
-          Click-Client $handle 605 182
+          Click-Client $handle 605 215
           Start-Sleep -Milliseconds 150
           if ((Get-PropValue $handle 'PPC_MODE') -ne 1) { throw 'Turbo mode button did not select Turbo' }
-          Click-Client $handle 392 95
+          Click-Client $handle 392 90
           Start-Sleep -Milliseconds 700
           $turboCombo = Get-PropValue $handle 'PPC_COMBO_BURSTS'
-          if ($turboCombo -lt 100 -or $turboCombo -gt 250) { throw "Turbo combo rate is outside safe acceptance range; bursts=$turboCombo" }
-          Click-Client $handle 592 95
+          if ($turboCombo -lt 100 -or $turboCombo -gt 250) { throw "Turbo combo rate is outside acceptance range; bursts=$turboCombo" }
+          Click-Client $handle 592 90
           Start-Sleep -Milliseconds 200
-          Click-Client $handle 380 182
+          Click-Client $handle 380 215
           Start-Sleep -Milliseconds 150
           if ((Get-PropValue $handle 'PPC_MODE') -ne 0) { throw 'Maximum mode button did not restore Maximum' }
           "TurboMinorRate=PASS($turboCombo bursts/0.7s)" | Add-Content build-info.txt
