@@ -49,10 +49,11 @@ void ComboWorker() {
             s = g_settings;
         }
 
-        // Runtime hotkeys use RegisterHotKey, so generated macro input no longer
-        // traverses a permanent low-level keyboard hook. Two/four complete cycles
-        // at 60 scheduler ticks keep the requested average while reducing system
-        // call overhead: 2*60=120 and 4*60=240 presses/sec for EACH combo key.
+        // Two/four complete cycles at 60 scheduler ticks keep the requested
+        // average while reducing system-call overhead: 2*60=120 and 4*60=240
+        // presses/sec for EACH combo key. Every generated event carries EXTRA_TAG,
+        // so the tiny Caps-only control hook never mistakes macro output for a
+        // physical control-key press.
         const int targetHz = ppc::minorRate(g_mode.load(std::memory_order_relaxed));
         const int repeats = targetHz >= 240 ? 4 : 2;
         constexpr int schedulerHz = 60;
@@ -146,11 +147,66 @@ void UpdateDiagnosticMarkers() {
     SetIntegerProp(L"PPC_CURE_RUNS", g_cureRuns.load(std::memory_order_relaxed));
 }
 
+// Caps Lock is special: RegisterHotKey receives it, but Windows also changes the
+// keyboard lock state. When Caps is reserved as Start/Stop (or active Cure), this
+// hook consumes ONLY Caps itself. Every other physical key is passed through
+// untouched, so opening the program cannot turn C into 6 or remap normal typing.
+LRESULT CALLBACK CapsControlProc(int code, WPARAM wp, LPARAM lp) {
+    if (code != HC_ACTION || !lp) return CallNextHookEx(g_capsControlHook, code, wp, lp);
+
+    const auto* k = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lp);
+    if (k->dwExtraInfo == EXTRA_TAG) return CallNextHookEx(g_capsControlHook, code, wp, lp);
+    if (static_cast<int>(k->vkCode) != VK_CAPITAL) return CallNextHookEx(g_capsControlHook, code, wp, lp);
+
+    // While assigning a new key, the dedicated capture hook owns the keystroke.
+    if (g_captureTarget.load(std::memory_order_acquire) != static_cast<int>(CaptureTarget::None)) {
+        return CallNextHookEx(g_capsControlHook, code, wp, lp);
+    }
+
+    const bool down = wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN;
+    const bool up = wp == WM_KEYUP || wp == WM_SYSKEYUP;
+    if (up) {
+        g_capsPhysicalDown.store(false, std::memory_order_release);
+        return 1;
+    }
+    if (!down) return 1;
+
+    // Suppress keyboard auto-repeat. One physical press means one control action.
+    if (g_capsPhysicalDown.exchange(true, std::memory_order_acq_rel)) return 1;
+
+    Settings s;
+    {
+        std::lock_guard<std::mutex> lk(g_settingsMutex);
+        s = g_settings;
+    }
+
+    const bool active = g_active.load(std::memory_order_relaxed);
+    int action = 0;
+    if (s.startHotkey == VK_CAPITAL && s.stopHotkey == VK_CAPITAL) {
+        action = HOTKEY_ID_START; // same key acts as an on/off toggle
+    } else if (active && s.stopHotkey == VK_CAPITAL) {
+        action = HOTKEY_ID_STOP;
+    } else if (!active && s.startHotkey == VK_CAPITAL) {
+        action = HOTKEY_ID_START;
+    } else if (active && s.cureEnabled && s.cureHotkey == VK_CAPITAL) {
+        action = HOTKEY_ID_CURE;
+    }
+
+    if (action != 0 && g_hwnd) PostMessageW(g_hwnd, WM_APP_CONTROL_KEY, static_cast<WPARAM>(action), 0);
+    return 1;
+}
+
 void UnregisterRuntimeHotkeys() {
-    if (!g_hwnd) return;
-    UnregisterHotKey(g_hwnd, HOTKEY_ID_START);
-    UnregisterHotKey(g_hwnd, HOTKEY_ID_STOP);
-    UnregisterHotKey(g_hwnd, HOTKEY_ID_CURE);
+    if (g_hwnd) {
+        UnregisterHotKey(g_hwnd, HOTKEY_ID_START);
+        UnregisterHotKey(g_hwnd, HOTKEY_ID_STOP);
+        UnregisterHotKey(g_hwnd, HOTKEY_ID_CURE);
+    }
+    if (g_capsControlHook) {
+        UnhookWindowsHookEx(g_capsControlHook);
+        g_capsControlHook = nullptr;
+    }
+    g_capsPhysicalDown.store(false, std::memory_order_release);
 }
 
 bool RefreshRuntimeHotkeys(bool showError) {
@@ -163,15 +219,33 @@ bool RefreshRuntimeHotkeys(bool showError) {
         s = g_settings;
     }
 
+    const bool active = g_active.load(std::memory_order_relaxed);
+    const bool needCapsHook = s.startHotkey == VK_CAPITAL ||
+                              s.stopHotkey == VK_CAPITAL ||
+                              (active && s.cureEnabled && s.cureHotkey == VK_CAPITAL);
+
     bool ok = true;
-    if (s.startHotkey == s.stopHotkey) {
-        ok = RegisterHotKey(g_hwnd, HOTKEY_ID_START, MOD_NOREPEAT, static_cast<UINT>(s.startHotkey)) != FALSE;
-    } else {
-        ok = RegisterHotKey(g_hwnd, HOTKEY_ID_START, MOD_NOREPEAT, static_cast<UINT>(s.startHotkey)) != FALSE;
-        if (ok) ok = RegisterHotKey(g_hwnd, HOTKEY_ID_STOP, MOD_NOREPEAT, static_cast<UINT>(s.stopHotkey)) != FALSE;
+    if (needCapsHook) {
+        g_capsControlHook = SetWindowsHookExW(WH_KEYBOARD_LL, CapsControlProc, GetModuleHandleW(nullptr), 0);
+        ok = g_capsControlHook != nullptr;
     }
 
-    if (ok && g_active.load(std::memory_order_relaxed) && s.cureEnabled) {
+    if (ok) {
+        if (s.startHotkey == s.stopHotkey) {
+            if (s.startHotkey != VK_CAPITAL) {
+                ok = RegisterHotKey(g_hwnd, HOTKEY_ID_START, MOD_NOREPEAT, static_cast<UINT>(s.startHotkey)) != FALSE;
+            }
+        } else {
+            if (s.startHotkey != VK_CAPITAL) {
+                ok = RegisterHotKey(g_hwnd, HOTKEY_ID_START, MOD_NOREPEAT, static_cast<UINT>(s.startHotkey)) != FALSE;
+            }
+            if (ok && s.stopHotkey != VK_CAPITAL) {
+                ok = RegisterHotKey(g_hwnd, HOTKEY_ID_STOP, MOD_NOREPEAT, static_cast<UINT>(s.stopHotkey)) != FALSE;
+            }
+        }
+    }
+
+    if (ok && active && s.cureEnabled && s.cureHotkey != VK_CAPITAL) {
         ok = RegisterHotKey(g_hwnd, HOTKEY_ID_CURE, MOD_NOREPEAT, static_cast<UINT>(s.cureHotkey)) != FALSE;
     }
 
@@ -185,31 +259,6 @@ bool RefreshRuntimeHotkeys(bool showError) {
         return false;
     }
     return true;
-}
-
-void RestoreReservedCapsState() {
-    if (!g_hwnd) return;
-    const int desired = g_reservedCapsState.load(std::memory_order_relaxed) & 1;
-    const int current = GetKeyState(VK_CAPITAL) & 1;
-    if (current == desired) return;
-
-    // RegisterHotKey receives Caps Lock globally but Windows still toggles the
-    // lock state. Temporarily remove our hotkeys, synthesize exactly one Caps
-    // press to restore the previous typing state, then register the controls again.
-    // This avoids a permanent low-level keyboard hook and therefore cannot rewrite
-    // ordinary C/6/etc. typing or throttle the macro's own generated input.
-    UnregisterRuntimeHotkeys();
-    INPUT in[2]{};
-    in[0].type = INPUT_KEYBOARD;
-    in[0].ki.wVk = VK_CAPITAL;
-    in[0].ki.dwExtraInfo = EXTRA_TAG;
-    in[1].type = INPUT_KEYBOARD;
-    in[1].ki.wVk = VK_CAPITAL;
-    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
-    in[1].ki.dwExtraInfo = EXTRA_TAG;
-    SendInput(2, in, sizeof(INPUT));
-    Sleep(2);
-    RefreshRuntimeHotkeys(false);
 }
 
 void UpdateStateTitle() {
@@ -241,7 +290,7 @@ void StopMacro() {
     g_active.store(false, std::memory_order_release);
     ResetEvent(g_wakeEvent);
     g_rSuppressUntil.store(0, std::memory_order_relaxed);
-    RefreshRuntimeHotkeys(false); // keep only Start/Stop registered while idle
+    RefreshRuntimeHotkeys(false);
     UpdateStateTitle();
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
 }
@@ -263,8 +312,7 @@ bool CanAssignHotkey(CaptureTarget target, int vk, const Settings& s) {
 }
 
 // This low-level hook exists ONLY for the short "Tuşa bas..." assignment window.
-// It is never installed during normal idle or macro operation, so normal typing
-// and generated combo events cannot be transformed by a permanent keyboard hook.
+// Normal runtime typing is never inspected by this capture hook.
 LRESULT CALLBACK KeyboardProc(int code, WPARAM wp, LPARAM lp) {
     if (code != HC_ACTION || !lp) return CallNextHookEx(g_keyboardHook, code, wp, lp);
 
