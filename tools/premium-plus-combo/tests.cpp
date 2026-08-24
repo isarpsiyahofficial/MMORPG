@@ -10,21 +10,24 @@ int main() {
     Settings s;
     assert(rRate(s, Mode::Maximum) == 25);
     assert(rRate(s, Mode::Turbo) == 40);
-    assert(s.startHotkey == kVkCapsLock);
+    assert(s.startHotkey == kVkTab);
     assert(s.stopHotkey == kVkCapsLock);
 
-    // Default: one Caps Lock press starts, the next stops.
+    assert(hotkeyAction(kVkTab, false, s) == 1);
+    assert(hotkeyAction(kVkCapsLock, true, s) == -1);
+    assert(hotkeyAction('A', false, s) == 0);
+
+    // Start and stop may also be assigned to the same key later; then it toggles.
+    s.startHotkey = kVkCapsLock;
+    s.stopHotkey = kVkCapsLock;
     assert(hotkeyAction(kVkCapsLock, false, s) == 1);
     assert(hotkeyAction(kVkCapsLock, true, s) == -1);
 
-    // Start and stop can later be assigned independently.
+    // Or independently.
     s.startHotkey = 0x78; // F9
     s.stopHotkey = 0x79;  // F10
     assert(hotkeyAction(0x78, false, s) == 1);
-    assert(hotkeyAction(0x78, true, s) == 1);
     assert(hotkeyAction(0x79, true, s) == -1);
-    assert(hotkeyAction(0x79, false, s) == -1);
-    assert(hotkeyAction('A', false, s) == 0);
 
     s.rRateMaximum = -8;
     s.rRateTurbo = 999;
@@ -37,7 +40,7 @@ int main() {
     assert(s.rRateTurbo == 100);
     assert(s.cureBar == 1);
     assert(s.cureSlot == 8);
-    assert(s.startHotkey == kVkCapsLock);
+    assert(s.startHotkey == kVkTab);
     assert(s.stopHotkey == kVkCapsLock);
 
     const std::int64_t freq = 10'000'000;
