@@ -1,17 +1,22 @@
-void SendCombo(const std::array<int, 3>& keys) {
-    INPUT in[6]{};
-    for (int i = 0; i < 3; ++i) {
-        const int j = i * 2;
-        in[j].type = INPUT_KEYBOARD;
-        in[j].ki.wVk = WORD(keys[i]);
-        in[j].ki.dwExtraInfo = EXTRA_TAG;
-        in[j + 1].type = INPUT_KEYBOARD;
-        in[j + 1].ki.wVk = WORD(keys[i]);
-        in[j + 1].ki.dwFlags = KEYEVENTF_KEYUP;
-        in[j + 1].ki.dwExtraInfo = EXTRA_TAG;
+void SendCombo(const std::array<int, 3>& keys, int repeats) {
+    repeats = std::clamp(repeats, 1, 4);
+    INPUT in[24]{};
+    int count = 0;
+    for (int r = 0; r < repeats; ++r) {
+        for (int i = 0; i < 3; ++i) {
+            in[count].type = INPUT_KEYBOARD;
+            in[count].ki.wVk = WORD(keys[i]);
+            in[count].ki.dwExtraInfo = EXTRA_TAG;
+            ++count;
+            in[count].type = INPUT_KEYBOARD;
+            in[count].ki.wVk = WORD(keys[i]);
+            in[count].ki.dwFlags = KEYEVENTF_KEYUP;
+            in[count].ki.dwExtraInfo = EXTRA_TAG;
+            ++count;
+        }
     }
-    if (SendInput(6, in, sizeof(INPUT)) == 6) {
-        g_comboBursts.fetch_add(1, std::memory_order_relaxed);
+    if (SendInput(static_cast<UINT>(count), in, sizeof(INPUT)) == static_cast<UINT>(count)) {
+        g_comboBursts.fetch_add(static_cast<unsigned long long>(repeats), std::memory_order_relaxed);
     }
 }
 
@@ -43,11 +48,20 @@ void ComboWorker() {
             std::lock_guard<std::mutex> lk(g_settingsMutex);
             s = g_settings;
         }
-        const int hz = ppc::minorRate(g_mode.load(std::memory_order_relaxed));
-        const long long step = std::max<long long>(1, freq / hz);
+
+        // A low-level global hotkey hook necessarily sees every SendInput keyboard
+        // event. Sending one 8>9>0 cycle per system call made Windows hook latency
+        // the limiting factor on some PCs. We therefore keep the requested average
+        // per-key rates while batching at a stable 60 scheduler ticks/second:
+        // Maximum = 2 cycles/tick = 120 presses/sec per key.
+        // Turbo   = 4 cycles/tick = 240 presses/sec per key.
+        const int targetHz = ppc::minorRate(g_mode.load(std::memory_order_relaxed));
+        const int repeats = targetHz >= 240 ? 4 : 2;
+        const int schedulerHz = targetHz / repeats; // 60 for both modes
+        const long long step = std::max<long long>(1, freq / schedulerHz);
         if (!g_active.load(std::memory_order_relaxed)) continue;
 
-        SendCombo(s.comboVk);
+        SendCombo(s.comboVk, repeats);
         next += step;
         const long long now = QpcNow();
         if (now - next > step * 2) next = now + step;
