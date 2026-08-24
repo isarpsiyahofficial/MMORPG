@@ -11,6 +11,39 @@ HWND hPowerSwitch{};
 HWND hPowerOverlay{};
 std::atomic<bool> g_powerEnabled{true};
 
+// One-time migration from builds where TAB/CAPS LOCK was the shipped default.
+// Saved custom hotkeys remain supported; only the exact legacy default pair is migrated.
+void LoadRegistry() {
+    PpcLegacyLoadRegistry();
+
+    HKEY key{};
+    DWORD marker = 0;
+    DWORD markerSize = sizeof(marker);
+    DWORD markerType = REG_DWORD;
+    bool migratedBefore = false;
+
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\PremiumPlusCombo\\RogueV2", 0, nullptr, 0,
+                        KEY_READ | KEY_WRITE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
+        migratedBefore = RegQueryValueExW(key, L"CapsToggleDefaultV3", nullptr, &markerType,
+                                          reinterpret_cast<BYTE*>(&marker), &markerSize) == ERROR_SUCCESS
+                         && markerType == REG_DWORD && marker == 1;
+
+        if (!migratedBefore) {
+            {
+                std::lock_guard<std::mutex> lk(g_settingsMutex);
+                if (g_settings.startHotkey == VK_TAB && g_settings.stopHotkey == VK_CAPITAL) {
+                    g_settings.startHotkey = VK_CAPITAL;
+                    g_settings.stopHotkey = VK_CAPITAL;
+                }
+            }
+            marker = 1;
+            RegSetValueExW(key, L"CapsToggleDefaultV3", 0, REG_DWORD,
+                           reinterpret_cast<const BYTE*>(&marker), sizeof(marker));
+        }
+        RegCloseKey(key);
+    }
+}
+
 // app_part2.inc is included with these three implementation names remapped.
 // The public wrappers below are what app_part4.inc sees.
 void StartMacro() {
