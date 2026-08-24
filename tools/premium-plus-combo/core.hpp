@@ -8,6 +8,7 @@ namespace ppc {
 enum class Mode : int { Maximum = 0, Turbo = 1 };
 
 // Kept Windows-header independent so the core tests stay portable.
+constexpr int kVkTab = 0x09;
 constexpr int kVkCapsLock = 0x14;
 
 struct Settings {
@@ -19,7 +20,7 @@ struct Settings {
     int cureBar{2};
     int cureSlot{6};
     int cureHotkey{'C'};
-    int startHotkey{kVkCapsLock};
+    int startHotkey{kVkTab};
     int stopHotkey{kVkCapsLock};
 };
 
@@ -41,14 +42,12 @@ inline Settings sanitize(Settings s) noexcept {
     s.cureBar = std::clamp(s.cureBar, 1, 8);
     s.cureSlot = std::clamp(s.cureSlot, 1, 8);
     if (s.cureHotkey <= 0 || s.cureHotkey > 0xFE) s.cureHotkey = 'C';
-    if (s.startHotkey <= 0 || s.startHotkey > 0xFE) s.startHotkey = kVkCapsLock;
+    if (s.startHotkey <= 0 || s.startHotkey > 0xFE) s.startHotkey = kVkTab;
     if (s.stopHotkey <= 0 || s.stopHotkey > 0xFE) s.stopHotkey = kVkCapsLock;
     return s;
 }
 
 // +1=start, -1=stop, 0=no control action.
-// When both controls use the same key (the default Caps Lock setup),
-// that one key behaves as an explicit on/off toggle.
 inline int hotkeyAction(int vk, bool active, const Settings& s) noexcept {
     const bool isStart = vk == s.startHotkey;
     const bool isStop = vk == s.stopHotkey;
