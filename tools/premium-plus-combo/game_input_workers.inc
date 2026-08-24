@@ -43,7 +43,7 @@ void ComboWorker() {
         const int rHz = ppc::rRate(s, mode);
         const bool rEnabledNow = s.rEnabled;
         const long long comboStep = std::max<long long>(1, freq / comboEventHz);
-        const long long rStep = std::max<long long>(1, freq / std::max(1, rHz));
+        const long long rStep = std::max<long long>(1, freq / (std::max)(1, rHz));
         long long now = QpcNow();
 
         if (!wasActive) {
@@ -99,7 +99,7 @@ void ComboWorker() {
         }
 
         long long target = nextCombo;
-        if (rEligible) target = std::min(target, nextR);
+        if (rEligible) target = (std::min)(target, nextR);
         PreciseWaitUntil(target);
     }
 }
