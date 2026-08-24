@@ -132,6 +132,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
 
+            // The capture hook consumes the assignment keystroke. Therefore this
+            // snapshot is the real user Caps Lock state before Caps becomes a
+            // reserved program control.
+            if (vk == VK_CAPITAL) {
+                g_reservedCapsState.store(GetKeyState(VK_CAPITAL) & 1, std::memory_order_relaxed);
+            }
+
             {
                 std::lock_guard<std::mutex> lk(g_settingsMutex);
                 if (target == CaptureTarget::Cure) g_settings.cureHotkey = vk;
@@ -146,22 +153,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_HOTKEY: {
+            Settings s;
+            {
+                std::lock_guard<std::mutex> lk(g_settingsMutex);
+                s = g_settings;
+            }
+
             if (static_cast<int>(wp) == HOTKEY_ID_START) {
-                Settings s;
-                {
-                    std::lock_guard<std::mutex> lk(g_settingsMutex);
-                    s = g_settings;
-                }
+                const bool capsControl = s.startHotkey == VK_CAPITAL;
                 if (s.startHotkey == s.stopHotkey && g_active.load(std::memory_order_relaxed)) StopMacro();
                 else StartMacro();
+                if (capsControl) RestoreReservedCapsState();
                 return 0;
             }
             if (static_cast<int>(wp) == HOTKEY_ID_STOP) {
+                const bool capsControl = s.stopHotkey == VK_CAPITAL;
                 StopMacro();
+                if (capsControl) RestoreReservedCapsState();
                 return 0;
             }
             if (static_cast<int>(wp) == HOTKEY_ID_CURE) {
+                const bool capsControl = s.cureHotkey == VK_CAPITAL;
                 if (g_active.load(std::memory_order_relaxed)) std::thread(CureWorker).detach();
+                if (capsControl) RestoreReservedCapsState();
                 return 0;
             }
             break;
@@ -278,6 +292,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     g_startedTicks.store(0, std::memory_order_relaxed);
     g_captureTarget.store(static_cast<int>(CaptureTarget::None), std::memory_order_relaxed);
     LoadRegistry();
+    g_reservedCapsState.store(GetKeyState(VK_CAPITAL) & 1, std::memory_order_relaxed);
 
     g_karus = LoadImageResource(IDR_KARUS);
     g_human = LoadImageResource(IDR_HUMAN);
