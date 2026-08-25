@@ -20,7 +20,7 @@ struct Settings {
     int cureBar{2};
     int cureSlot{6};
     int cureHotkey{'C'};
-    int startHotkey{kVkCapsLock};
+    int startHotkey{kVkTab};
     int stopHotkey{kVkCapsLock};
 };
 
@@ -42,7 +42,7 @@ inline Settings sanitize(Settings s) noexcept {
     s.cureBar = std::clamp(s.cureBar, 1, 8);
     s.cureSlot = std::clamp(s.cureSlot, 1, 8);
     if (s.cureHotkey <= 0 || s.cureHotkey > 0xFE) s.cureHotkey = 'C';
-    if (s.startHotkey <= 0 || s.startHotkey > 0xFE) s.startHotkey = kVkCapsLock;
+    if (s.startHotkey <= 0 || s.startHotkey > 0xFE) s.startHotkey = kVkTab;
     if (s.stopHotkey <= 0 || s.stopHotkey > 0xFE) s.stopHotkey = kVkCapsLock;
     return s;
 }
