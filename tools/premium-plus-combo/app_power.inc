@@ -11,8 +11,10 @@ HWND hPowerSwitch{};
 HWND hPowerOverlay{};
 std::atomic<bool> g_powerEnabled{true};
 
-// One-time migration from builds where TAB/CAPS LOCK was the shipped default.
-// Saved custom hotkeys remain supported; only the exact legacy default pair is migrated.
+// One-time correction for builds that temporarily shipped CAPS LOCK as both
+// start and stop. The intended Premium Plus controls are TAB=start and
+// CAPS LOCK=stop. Only the exact unwanted CAPS/CAPS pair is migrated so any
+// genuinely custom independent hotkeys remain untouched.
 void LoadRegistry() {
     PpcLegacyLoadRegistry();
 
@@ -24,20 +26,20 @@ void LoadRegistry() {
 
     if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\PremiumPlusCombo\\RogueV2", 0, nullptr, 0,
                         KEY_READ | KEY_WRITE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
-        migratedBefore = RegQueryValueExW(key, L"CapsToggleDefaultV3", nullptr, &markerType,
+        migratedBefore = RegQueryValueExW(key, L"TabStartCapsStopDefaultV4", nullptr, &markerType,
                                           reinterpret_cast<BYTE*>(&marker), &markerSize) == ERROR_SUCCESS
                          && markerType == REG_DWORD && marker == 1;
 
         if (!migratedBefore) {
             {
                 std::lock_guard<std::mutex> lk(g_settingsMutex);
-                if (g_settings.startHotkey == VK_TAB && g_settings.stopHotkey == VK_CAPITAL) {
-                    g_settings.startHotkey = VK_CAPITAL;
+                if (g_settings.startHotkey == VK_CAPITAL && g_settings.stopHotkey == VK_CAPITAL) {
+                    g_settings.startHotkey = VK_TAB;
                     g_settings.stopHotkey = VK_CAPITAL;
                 }
             }
             marker = 1;
-            RegSetValueExW(key, L"CapsToggleDefaultV3", 0, REG_DWORD,
+            RegSetValueExW(key, L"TabStartCapsStopDefaultV4", 0, REG_DWORD,
                            reinterpret_cast<const BYTE*>(&marker), sizeof(marker));
         }
         RegCloseKey(key);
@@ -195,7 +197,7 @@ LRESULT CALLBACK PowerOverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_RBUTTONDOWN:
         case WM_RBUTTONUP:
             // Deliberately consume clicks: parent Start/Stop/mode/save hit regions
-            // and all child controls underneath are unreachable while master OFF.
+            // and all child controls underneath are unreachable while OFF.
             return 0;
 
         case WM_ERASEBKGND:
