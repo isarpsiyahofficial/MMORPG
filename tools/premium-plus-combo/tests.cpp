@@ -31,15 +31,16 @@ int main() {
     Settings s;
     assert(rRate(s, Mode::Maximum) == 25);
     assert(rRate(s, Mode::Turbo) == 40);
-    assert(s.startHotkey == kVkCapsLock);
+    assert(s.startHotkey == kVkTab);
     assert(s.stopHotkey == kVkCapsLock);
 
-    // Default CAPS LOCK acts as a start/stop toggle.
-    assert(hotkeyAction(kVkCapsLock, false, s) == 1);
+    // Default controls are independent: TAB starts, CAPS LOCK always stops.
+    assert(hotkeyAction(kVkTab, false, s) == 1);
     assert(hotkeyAction(kVkCapsLock, true, s) == -1);
+    assert(hotkeyAction(kVkCapsLock, false, s) == -1);
     assert(hotkeyAction('A', false, s) == 0);
 
-    // Start and stop can still be assigned independently.
+    // Start and stop can still be reassigned independently.
     s.startHotkey = 0x78; // F9
     s.stopHotkey = 0x79;  // F10
     assert(hotkeyAction(0x78, false, s) == 1);
@@ -56,7 +57,7 @@ int main() {
     assert(s.rRateTurbo == 100);
     assert(s.cureBar == 1);
     assert(s.cureSlot == 8);
-    assert(s.startHotkey == kVkCapsLock);
+    assert(s.startHotkey == kVkTab);
     assert(s.stopHotkey == kVkCapsLock);
 
     const std::int64_t freq = 10'000'000;
