@@ -20,13 +20,16 @@ std::array<std::atomic<unsigned long long>, 256> g_gameTapCounts{};
 void WaitInputMicros(int microseconds) {
     if (microseconds <= 0) return;
     const long long freq = QpcFreq();
-    const long long target = QpcNow() +
-        std::max<long long>(1, (freq * static_cast<long long>(microseconds)) / 1'000'000LL);
+    const long long requestedTicks =
+        (freq * static_cast<long long>(microseconds)) / 1'000'000LL;
+    const long long deltaTicks = requestedTicks > 1 ? requestedTicks : 1;
+    const long long target = QpcNow() + deltaTicks;
 
     // Do not burn a CPU core during the millisecond-scale DirectInput dwell. Sleep
     // most of the interval, then finish against QPC for a stable release edge.
     if (microseconds >= 2500) {
-        const int sleepMs = std::max(1, (microseconds / 1000) - 1);
+        const int requestedSleep = (microseconds / 1000) - 1;
+        const int sleepMs = requestedSleep > 1 ? requestedSleep : 1;
         Sleep(static_cast<DWORD>(sleepMs));
     }
     for (;;) {
