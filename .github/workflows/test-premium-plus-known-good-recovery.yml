@@ -126,26 +126,26 @@ jobs:
           function P([IntPtr]$w,[string]$n){[W]::GetProp($w,$n).ToInt64()}
           function Click([IntPtr]$w,[int]$x,[int]$y){$lp=(($y-band65535)-shl16)-bor($x-band65535);[void][W]::SendMessage($w,0x0202,[IntPtr]::Zero,[IntPtr]$lp);Start-Sleep -Milliseconds 160}
           function Key([byte]$v){[W]::keybd_event($v,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 80;[W]::keybd_event($v,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 180}
-          function Shot([IntPtr]$w){$b=New-Object Drawing.Bitmap 800,500;$g=[Drawing.Graphics]::FromImage($b);$dc=$g.GetHdc();$ok=[W]::PrintWindow($w,$dc,0);$g.ReleaseHdc($dc);$g.Dispose();if(-not$ok){throw'PrintWindow failed'};$b.Save((Join-Path (Get-Location)'known-good-ui.png'),[Drawing.Imaging.ImageFormat]::Png);$b.Dispose()}
+          function Shot([IntPtr]$w){$b=New-Object Drawing.Bitmap 800,500;$g=[Drawing.Graphics]::FromImage($b);$dc=$g.GetHdc();$ok=[W]::PrintWindow($w,$dc,0);$g.ReleaseHdc($dc);$g.Dispose();if(-not $ok){ throw 'PrintWindow failed' };$b.Save((Join-Path (Get-Location)'known-good-ui.png'),[Drawing.Imaging.ImageFormat]::Png);$b.Dispose()}
 
           $observer=Start-Process (Resolve-Path .\GameKeyObserver.exe) -PassThru
           Start-Sleep -Milliseconds 300
           $app=Start-Process (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
           $w=[IntPtr]::Zero
-          for($i=0;$i-lt80;$i++){Start-Sleep -Milliseconds 100;$app.Refresh();if($app.HasExited){throw"app exited $($app.ExitCode)"};$w=[W]::Main([uint32]$app.Id);if($w-ne[IntPtr]::Zero){break}}
-          if($w-eq[IntPtr]::Zero){throw'main window missing'}
+          for($i=0;$i-lt80;$i++){Start-Sleep -Milliseconds 100;$app.Refresh();if($app.HasExited){ throw "app exited $($app.ExitCode)" };$w=[W]::Main([uint32]$app.Id);if($w-ne[IntPtr]::Zero){break}}
+          if($w-eq[IntPtr]::Zero){ throw 'main window missing' }
           Start-Sleep -Milliseconds 450
-          if((P $w 'PPC_ACTIVE')-ne0){throw'app auto-started'}
-          if((T(C $w 1901))-ne'Başlat|Giriş Dizisi|Ayarlarımı Kaydet|Çalışıyor'){throw'Turkish UI changed or mojibake returned'}
-          if((T(C $w 1001))-ne'8'-or(T(C $w 1002))-ne'9'-or(T(C $w 1003))-ne'0'){throw'default combo changed'}
-          if((T(C $w 1301))-ne'CAPS LOCK'-or(T(C $w 1302))-ne'CAPS LOCK'){throw'known-good hotkeys changed'}
+          if((P $w 'PPC_ACTIVE')-ne0){ throw 'app auto-started' }
+          if((T(C $w 1901))-ne'Başlat|Giriş Dizisi|Ayarlarımı Kaydet|Çalışıyor'){ throw 'Turkish UI changed or mojibake returned' }
+          if((T(C $w 1001))-ne'8'-or(T(C $w 1002))-ne'9'-or(T(C $w 1003))-ne'0'){ throw 'default combo changed' }
+          if((T(C $w 1301))-ne'CAPS LOCK'-or(T(C $w 1302))-ne'CAPS LOCK'){ throw 'known-good hotkeys changed' }
           Shot $w
 
           # Real shipped global default: CAPS LOCK toggles Start/Stop without auto-run.
           Key 0x14
-          if((P $w 'PPC_ACTIVE')-ne1){throw'CAPS LOCK global start failed'}
+          if((P $w 'PPC_ACTIVE')-ne1){ throw 'CAPS LOCK global start failed' }
           Key 0x14
-          if((P $w 'PPC_ACTIVE')-ne0){throw'CAPS LOCK global stop failed'}
+          if((P $w 'PPC_ACTIVE')-ne0){ throw 'CAPS LOCK global stop failed' }
 
           # Run the repaired synthetic game-key path and Cure.
           Click $w 307 118
@@ -153,10 +153,10 @@ jobs:
           Key 0x43
           Start-Sleep -Milliseconds 2600
           Click $w 492 118
-          if((P $w 'PPC_ACTIVE')-ne0){throw'stop failed'}
+          if((P $w 'PPC_ACTIVE')-ne0){ throw 'stop failed' }
           Stop-Process -Id $app.Id -Force
           $observer.WaitForExit()
-          if($observer.ExitCode-ne0){throw"observer exit $($observer.ExitCode)"}
+          if($observer.ExitCode-ne0){ throw "observer exit $($observer.ExitCode)" }
           $txt=Get-Content game-keys-observed.txt -Raw
           function N([string]$name){
             $pattern='(?m)^'+[regex]::Escape($name)+'=(\d+)\s*$'
@@ -165,11 +165,11 @@ jobs:
             return [int64]$m.Groups[1].Value
           }
           $n8=N '8';$n9=N '9';$n0=N '0';$nr=N 'R';$nf2=N 'F2';$n6=N '6';$nf1=N 'F1';$ov=N 'Overlap'
-          if($n8-lt70-or$n9-lt70-or$n0-lt70){throw"combo delivery too low/missing: 8=$n8 9=$n9 0=$n0"}
-          $mx=[math]::Max($n8,[math]::Max($n9,$n0));$mn=[math]::Min($n8,[math]::Min($n9,$n0));if(($mx-$mn)-gt2){throw"combo imbalance: 8=$n8 9=$n9 0=$n0"}
-          if($nr-lt8){throw"R delivery missing/too low: $nr"}
-          if($nf2-lt1-or$n6-lt1-or$nf1-lt1){throw"Cure delivery missing: F2=$nf2 slot6=$n6 restoreF1=$nf1"}
-          if($ov-ne0){throw"overlapping synthetic game keys detected: $ov"}
+          if($n8-lt70-or$n9-lt70-or$n0-lt70){ throw "combo delivery too low/missing: 8=$n8 9=$n9 0=$n0" }
+          $mx=[math]::Max($n8,[math]::Max($n9,$n0));$mn=[math]::Min($n8,[math]::Min($n9,$n0));if(($mx-$mn)-gt2){ throw "combo imbalance: 8=$n8 9=$n9 0=$n0" }
+          if($nr-lt8){ throw "R delivery missing/too low: $nr" }
+          if($nf2-lt1-or$n6-lt1-or$nf1-lt1){ throw "Cure delivery missing: F2=$nf2 slot6=$n6 restoreF1=$nf1" }
+          if($ov-ne0){ throw "overlapping synthetic game keys detected: $ov" }
           "TurkishUiExactKnownGood=PASS"|Add-Content ../../recovery-report.txt
           "InitialInactive=PASS"|Add-Content ../../recovery-report.txt
           "CapsGlobalToggle=PASS"|Add-Content ../../recovery-report.txt
@@ -183,7 +183,7 @@ jobs:
         run: |
           cd tools/premium-plus-combo
           $deps=(dumpbin /DEPENDENTS PremiumPlusCombo.exe|Out-String)
-          if($deps-match'VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt'){throw'external VC runtime dependency'}
+          if($deps-match'VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt'){ throw 'external VC runtime dependency' }
           "StaticCRT=PASS"|Add-Content ../../recovery-report.txt
           "SourceSHA=$((git rev-parse HEAD).Trim())"|Add-Content ../../recovery-report.txt
           "SHA256=$((Get-FileHash PremiumPlusCombo.exe -Algorithm SHA256).Hash)"|Add-Content ../../recovery-report.txt
