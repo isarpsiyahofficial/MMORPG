@@ -40,7 +40,8 @@ inline Settings sanitize(Settings s) noexcept {
     s.rRateMaximum = std::clamp(s.rRateMaximum, 1, 100);
     s.rRateTurbo = std::clamp(s.rRateTurbo, 1, 100);
     s.cureBar = std::clamp(s.cureBar, 1, 8);
-    s.cureSlot = std::clamp(s.cureSlot, 1, 8);
+    // Cure skill slots cover the full keyboard row: 1..9 and 0 (stored as 10).
+    s.cureSlot = std::clamp(s.cureSlot, 1, 10);
     if (s.cureHotkey <= 0 || s.cureHotkey > 0xFE) s.cureHotkey = 'C';
     if (s.startHotkey <= 0 || s.startHotkey > 0xFE) s.startHotkey = kVkCapsLock;
     if (s.stopHotkey <= 0 || s.stopHotkey > 0xFE) s.stopHotkey = kVkCapsLock;
