@@ -1,0 +1,161 @@
+#define NOMINMAX
+#include <windows.h>
+#include <windowsx.h>
+#include <cstring>
+#include <gdiplus.h>
+#include <mmsystem.h>
+#include <atomic>
+#include <array>
+#include <string>
+#include <thread>
+#include <mutex>
+#include <memory>
+#include <algorithm>
+#include <cwctype>
+#include <sstream>
+#include <iomanip>
+#include "core.hpp"
+#include "resource.h"
+
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "winmm.lib")
+
+using namespace Gdiplus;
+using ppc::Mode;
+using ppc::Settings;
+
+namespace {
+constexpr int W = 800;
+constexpr int H = 500;
+constexpr UINT WM_APP_CAPTURED_KEY = WM_APP + 1;
+constexpr UINT WM_APP_CURE_TRIGGER = WM_APP + 2;
+constexpr UINT WM_APP_CONTROL_KEY = WM_APP + 3;
+constexpr ULONG_PTR EXTRA_TAG = 0x5050434F4D424FULL;
+constexpr int HOTKEY_ID_START = 0x5101;
+constexpr int HOTKEY_ID_STOP  = 0x5102;
+constexpr int HOTKEY_ID_CURE  = 0x5103;
+
+enum class CaptureTarget : int { None = 0, Cure = 1, Start = 2, Stop = 3 };
+
+HWND g_hwnd{};
+HBRUSH g_brushCream{};
+HBRUSH g_brushInput{};
+HFONT g_font{}, g_fontBold{};
+ULONG_PTR g_gdiplusToken{};
+std::unique_ptr<Bitmap> g_karus;
+std::unique_ptr<Bitmap> g_human;
+HHOOK g_keyboardHook{};
+HHOOK g_capsControlHook{};
+
+std::atomic<bool> g_quit{false};
+std::atomic<bool> g_active{false};
+std::atomic<int> g_captureTarget{static_cast<int>(CaptureTarget::None)};
+std::atomic<int> g_captureSwallowVk{0};
+std::atomic<bool> g_capsPhysicalDown{false};
+std::atomic<int> g_currentBar{1};
+std::atomic<long long> g_rSuppressUntil{0};
+std::atomic<bool> g_cureBusy{false};
+std::atomic<Mode> g_mode{Mode::Maximum};
+std::atomic<long long> g_startedTicks{0};
+std::atomic<unsigned long long> g_comboBursts{0};
+std::atomic<unsigned long long> g_rPresses{0};
+std::atomic<unsigned long long> g_cureRuns{0};
+std::atomic<unsigned long long> g_paintCount{0};
+HANDLE g_wakeEvent{};
+
+Settings g_settings{};
+std::mutex g_settingsMutex;
+
+HWND hSeq1{}, hSeq2{}, hSeq3{};
+HWND hRCheck{}, hRMax{}, hRTurbo{};
+HWND hCureCheck{}, hCureBar{}, hCureSlot{}, hCureKey{};
+HWND hStartKey{}, hStopKey{};
+HWND hUnicodeSentinel{};
+
+RECT rcStart{225,96,390,140};
+RECT rcStop{410,96,575,140};
+RECT rcMax{205,182,390,236};
+RECT rcTurbo{410,182,595,236};
+RECT rcInfoMax{360,188,384,212};
+RECT rcInfoTurbo{565,188,589,212};
+RECT rcSave{300,435,500,470};
+RECT rcMin{735,12,760,38};
+RECT rcClose{765,12,792,38};
+RECT rcFooter{12,474,788,496};
+
+long long QpcNow() {
+    LARGE_INTEGER v{};
+    QueryPerformanceCounter(&v);
+    return v.QuadPart;
+}
+
+long long QpcFreq() {
+    static long long f = [] {
+        LARGE_INTEGER v{};
+        QueryPerformanceFrequency(&v);
+        return v.QuadPart;
+    }();
+    return f;
+}
+
+bool PtIn(const RECT& r, int x, int y) {
+    POINT p{x, y};
+    return PtInRect(&r, p) != FALSE;
+}
+
+std::wstring VkName(int vk) {
+    if (vk >= '0' && vk <= '9') return std::wstring(1, wchar_t(vk));
+    if (vk >= 'A' && vk <= 'Z') return std::wstring(1, wchar_t(vk));
+    if (vk >= VK_F1 && vk <= VK_F12) return L"F" + std::to_wstring(vk - VK_F1 + 1);
+    switch (vk) {
+        case VK_SPACE: return L"SPACE";
+        case VK_SHIFT: return L"SHIFT";
+        case VK_CONTROL: return L"CTRL";
+        case VK_MENU: return L"ALT";
+        case VK_TAB: return L"TAB";
+        case VK_CAPITAL: return L"CAPS LOCK";
+        case VK_ESCAPE: return L"ESC";
+        case VK_RETURN: return L"ENTER";
+        case VK_BACK: return L"BACKSPACE";
+        case VK_INSERT: return L"INSERT";
+        case VK_DELETE: return L"DELETE";
+        case VK_HOME: return L"HOME";
+        case VK_END: return L"END";
+        case VK_PRIOR: return L"PAGE UP";
+        case VK_NEXT: return L"PAGE DOWN";
+        default: return L"VK" + std::to_wstring(vk);
+    }
+}
+
+int ParseVk(std::wstring s) {
+    s.erase(std::remove_if(s.begin(), s.end(), [](wchar_t c) { return iswspace(c); }), s.end());
+    std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c) { return static_cast<wchar_t>(towupper(c)); });
+    if (s.size() == 1 && ((s[0] >= L'0' && s[0] <= L'9') || (s[0] >= L'A' && s[0] <= L'Z'))) return int(s[0]);
+    if (s.size() >= 2 && s[0] == L'F') {
+        int n = _wtoi(s.c_str() + 1);
+        if (n >= 1 && n <= 12) return VK_F1 + n - 1;
+    }
+    if (s == L"SPACE") return VK_SPACE;
+    if (s == L"SHIFT") return VK_SHIFT;
+    if (s == L"CTRL" || s == L"CONTROL") return VK_CONTROL;
+    if (s == L"ALT") return VK_MENU;
+    if (s == L"TAB") return VK_TAB;
+    if (s == L"CAPS" || s == L"CAPSLOCK") return VK_CAPITAL;
+    return 0;
+}
+
+bool SendKey(int vk) {
+    INPUT in[2]{};
+    in[0].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = WORD(vk);
+    in[0].ki.dwExtraInfo = EXTRA_TAG;
+    in[1].type = INPUT_KEYBOARD;
+    in[1].ki.wVk = WORD(vk);
+    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    in[1].ki.dwExtraInfo = EXTRA_TAG;
+    return SendInput(2, in, sizeof(INPUT)) == 2;
+}
