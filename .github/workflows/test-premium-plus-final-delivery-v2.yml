@@ -1,0 +1,150 @@
+name: Test Premium Plus Final Delivery V2
+
+on:
+  push:
+    branches: [ premium-plus-combo ]
+    paths:
+      - '.github/workflows/test-premium-plus-final-delivery-v2.yml'
+  workflow_dispatch:
+
+jobs:
+  final-delivery-v2:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout exact source HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build exact portable EXE
+        run: |
+          cd tools\premium-plus-combo
+          rc /nologo /fo app.res app.rc
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
+
+      - name: Exercise full application
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $ErrorActionPreference='Stop'
+          Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+          using System; using System.Text; using System.Runtime.InteropServices;
+          public static class P {
+            public delegate bool EP(IntPtr h,IntPtr p);
+            [DllImport("user32.dll")] public static extern bool EnumWindows(EP p,IntPtr l);
+            [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);
+            [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h,int id);
+            [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+            [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr GetProp(IntPtr h,string n);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h,StringBuilder b,int n);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h,StringBuilder b,int n);
+            [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageW")] public static extern IntPtr GetTextMsg(IntPtr h,uint m,IntPtr w,StringBuilder l);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageW")] public static extern IntPtr SetTextMsg(IntPtr h,uint m,IntPtr w,string l);
+            [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+            [DllImport("user32.dll")] public static extern void keybd_event(byte v,byte s,uint f,UIntPtr x);
+            [DllImport("user32.dll")] public static extern short GetKeyState(int v);
+            [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint f);
+            public static IntPtr Main(uint pid){IntPtr r=IntPtr.Zero;EnumWindows(delegate(IntPtr h,IntPtr l){uint p;GetWindowThreadProcessId(h,out p);if(p==pid&&GetDlgItem(h,1001)!=IntPtr.Zero&&GetDlgItem(h,1401)!=IntPtr.Zero){r=h;return false;}return true;},IntPtr.Zero);return r;}
+            public static IntPtr Dialog(uint pid){IntPtr r=IntPtr.Zero;EnumWindows(delegate(IntPtr h,IntPtr l){uint p;GetWindowThreadProcessId(h,out p);if(p!=pid)return true;var b=new StringBuilder(64);GetClassName(h,b,b.Capacity);if(b.ToString()=="#32770"){r=h;return false;}return true;},IntPtr.Zero);return r;}
+          }
+          "@
+          function C([IntPtr]$w,[int]$id){[P]::GetDlgItem($w,$id)}
+          function T([IntPtr]$h){$b=New-Object Text.StringBuilder 256;[void][P]::GetTextMsg($h,0x000D,[IntPtr]$b.Capacity,$b);$b.ToString()}
+          function ST([IntPtr]$h,[string]$s){[void][P]::SetTextMsg($h,0x000C,[IntPtr]::Zero,$s);Start-Sleep -Milliseconds 80}
+          function G([IntPtr]$w,[string]$n){[P]::GetProp($w,$n).ToInt64()}
+          function Refresh([IntPtr]$w){[void][P]::SendMessage($w,0x000F,[IntPtr]::Zero,[IntPtr]::Zero);Start-Sleep -Milliseconds 70}
+          function Key([byte]$v){[P]::keybd_event($v,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 100;[P]::keybd_event($v,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 230}
+          function BC([IntPtr]$h){[void][P]::SendMessage($h,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero);Start-Sleep -Milliseconds 170}
+          function CK([IntPtr]$h){[P]::SendMessage($h,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()-eq1}
+          function CS([IntPtr]$h,[int]$i){[void][P]::SendMessage($h,0x014E,[IntPtr]$i,[IntPtr]::Zero);Start-Sleep -Milliseconds 90}
+          function CG([IntPtr]$h){[P]::SendMessage($h,0x0147,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()}
+          function PC([IntPtr]$w,[int]$x,[int]$y){$lp=(($y-band65535)-shl16)-bor($x-band65535);[void][P]::SendMessage($w,0x0202,[IntPtr]::Zero,[IntPtr]$lp);Start-Sleep -Milliseconds 180}
+          function PP([IntPtr]$w,[int]$x,[int]$y){$lp=(($y-band65535)-shl16)-bor($x-band65535);[void][P]::PostMessage($w,0x0202,[IntPtr]::Zero,[IntPtr]$lp)}
+          function Pow([IntPtr]$h){[void][P]::SendMessage($h,0x0201,[IntPtr]1,[IntPtr]::Zero);[void][P]::SendMessage($h,0x0202,[IntPtr]::Zero,[IntPtr]::Zero);Start-Sleep -Milliseconds 240}
+          function Shot([IntPtr]$w,[string]$n){$b=New-Object Drawing.Bitmap 800,500;$g=[Drawing.Graphics]::FromImage($b);$dc=$g.GetHdc();$ok=[P]::PrintWindow($w,$dc,0);$g.ReleaseHdc($dc);$g.Dispose();if(-not$ok){$b.Dispose();throw'PrintWindow failed'};$b.Save((Join-Path (Get-Location) $n),[Drawing.Imaging.ImageFormat]::Png);$b.Dispose()}
+          function Launch{$p=Start-Process (Resolve-Path .\PremiumPlusCombo.exe) -PassThru;$w=[IntPtr]::Zero;for($i=0;$i-lt100;$i++){Start-Sleep -Milliseconds 100;$p.Refresh();if($p.HasExited){throw"startup exit $($p.ExitCode)"};$w=[P]::Main([uint32]$p.Id);if($w-ne[IntPtr]::Zero){break}};if($w-eq[IntPtr]::Zero){throw'main missing'};Start-Sleep -Milliseconds 450;@($p,$w)}
+          function Kill($p){if($null-ne$p-and-not$p.HasExited){Stop-Process -Id $p.Id -Force;Start-Sleep -Milliseconds 350}}
+          function DTitle([IntPtr]$d){$b=New-Object Text.StringBuilder 128;[void][P]::GetWindowText($d,$b,$b.Capacity);$b.ToString()}
+          function Save([uint32]$processId){$d=[IntPtr]::Zero;for($i=0;$i-lt50;$i++){Start-Sleep -Milliseconds 100;$d=[P]::Dialog($processId);if($d-ne[IntPtr]::Zero){break}};if($d-eq[IntPtr]::Zero){throw'save dialog missing'};$title=DTitle $d;if($title-ne'Premium Plus Combo'){throw"save warning: $title"};[void][P]::SendMessage($d,0x0111,[IntPtr]1,[IntPtr]::Zero);Start-Sleep -Milliseconds 250}
+
+          $path='HKCU:\Software\PremiumPlusCombo\RogueV2'
+          Remove-Item 'HKCU:\Software\PremiumPlusCombo' -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Clean persisted CAPS/CAPS + inactive + all controls.
+          $x=Launch;$proc=$x[0];$w=[IntPtr]$x[1]
+          if((G $w 'PPC_ACTIVE')-ne0){throw'auto-started'}
+          if((T(C $w 1301))-ne'CAPS LOCK'-or(T(C $w 1302))-ne'CAPS LOCK'){throw'clean hotkeys wrong'}
+          $r=Get-ItemProperty $path;if($r.StartHotkey-ne20-or$r.StopHotkey-ne20-or$r.CapsToggleRestoreV6-ne1){throw'clean CAPS/CAPS not persisted'}
+          foreach($id in 1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302,1401){$c=C $w $id;if($c-eq[IntPtr]::Zero-or-not[P]::IsWindowVisible($c)){throw"missing/hidden $id"}}
+          Shot $w 'ui-before.png'
+          $cap=[P]::GetKeyState(20)-band1;Key 20;if((G $w 'PPC_ACTIVE')-ne1){throw'CAPS start failed'};Key 20;if((G $w 'PPC_ACTIVE')-ne0){throw'CAPS stop failed'};if(([P]::GetKeyState(20)-band1)-ne$cap){throw'CAPS lock state changed'}
+          Kill $proc;$x=Launch;$proc=$x[0];$w=[IntPtr]$x[1];if((T(C $w 1301))-ne'CAPS LOCK'-or(T(C $w 1302))-ne'CAPS LOCK'){throw'CAPS/CAPS relaunch failed'};Kill $proc
+
+          # Self-heal the exact intermediate TAB/CAPS regression including old markers.
+          Remove-Item 'HKCU:\Software\PremiumPlusCombo' -Recurse -Force -ErrorAction SilentlyContinue;New-Item $path -Force|Out-Null
+          New-ItemProperty $path StartHotkey -PropertyType DWord -Value 9 -Force|Out-Null;New-ItemProperty $path StopHotkey -PropertyType DWord -Value 20 -Force|Out-Null;New-ItemProperty $path CapsToggleDefaultV3 -PropertyType DWord -Value 1 -Force|Out-Null;New-ItemProperty $path CapsToggleRestoreV5 -PropertyType DWord -Value 1 -Force|Out-Null
+          $x=Launch;$proc=$x[0];$w=[IntPtr]$x[1];$r=Get-ItemProperty $path;if((T(C $w 1301))-ne'CAPS LOCK'-or(T(C $w 1302))-ne'CAPS LOCK'-or$r.StartHotkey-ne20-or$r.StopHotkey-ne20-or$r.CapsToggleRestoreV6-ne1){throw'TAB/CAPS repair failed'}
+
+          # Actual hotkey assignment controls.
+          BC(C $w 1301);Key 74;if((T(C $w 1301))-ne'J'){throw'start assignment failed'}
+          BC(C $w 1302);Key 75;if((T(C $w 1302))-ne'K'){throw'stop assignment failed'}
+          BC(C $w 1204);Key 86;if((T(C $w 1204))-ne'V'){throw'cure assignment failed'}
+
+          # Actual edit/check/combo controls + Save.
+          ST(C $w 1001)'1';ST(C $w 1002)'2';ST(C $w 1003)'3';if((T(C $w 1001))-ne'1'-or(T(C $w 1002))-ne'2'-or(T(C $w 1003))-ne'3'){throw'sequence editors failed'}
+          if(CK(C $w 1101)){BC(C $w 1101)};ST(C $w 1102)'33';ST(C $w 1103)'44';if(CK(C $w 1201)){BC(C $w 1201)};CS(C $w 1202)4;CS(C $w 1203)6
+          PP $w 400 452;Save([uint32]$proc.Id);$r=Get-ItemProperty $path
+          if($r.Seq1-ne49-or$r.Seq2-ne50-or$r.Seq3-ne51){throw'sequence save failed'};if($r.REnabled-ne0-or$r.RMax-ne33-or$r.RTurbo-ne44){throw'R save failed'};if($r.CureEnabled-ne0-or$r.CureBar-ne5-or$r.CureSlot-ne7-or$r.CureHotkey-ne86){throw'Cure save failed'};if($r.StartHotkey-ne74-or$r.StopHotkey-ne75){throw'hotkey save failed'}
+          Kill $proc;$x=Launch;$proc=$x[0];$w=[IntPtr]$x[1]
+          if((T(C $w 1001))-ne'1'-or(T(C $w 1002))-ne'2'-or(T(C $w 1003))-ne'3'){throw'sequence reload failed'};if(CK(C $w 1101)){throw'R reload failed'};if((T(C $w 1102))-ne'33'-or(T(C $w 1103))-ne'44'){throw'R rates reload failed'};if(CK(C $w 1201)){throw'Cure reload failed'};if((CG(C $w 1202))-ne4-or(CG(C $w 1203))-ne6){throw'Cure selectors reload failed'};if((T(C $w 1301))-ne'J'-or(T(C $w 1302))-ne'K'-or(T(C $w 1204))-ne'V'){throw'hotkeys reload failed'}
+
+          # J/K runtime and combo output. Refresh diagnostics after workers run.
+          Key 74;if((G $w 'PPC_ACTIVE')-ne1){throw'J start failed'};Start-Sleep -Milliseconds 600;Refresh $w;if((G $w 'PPC_COMBO_BURSTS')-le0){throw'combo runtime failed'};if((G $w 'PPC_R_PRESSES')-ne0){throw'R fired disabled'};Key 75;if((G $w 'PPC_ACTIVE')-ne0){throw'K stop failed'}
+
+          # R checkbox + drawn Start/Stop.
+          BC(C $w 1101);PC $w 307 118;Start-Sleep -Milliseconds 650;Refresh $w;if((G $w 'PPC_ACTIVE')-ne1-or(G $w 'PPC_R_PRESSES')-le0){throw'R or Start failed'};PC $w 492 118;if((G $w 'PPC_ACTIVE')-ne0){throw'Stop failed'}
+
+          # Cure checkbox/hotkey and 2-second R suppression/resume.
+          BC(C $w 1201);PC $w 307 118;Start-Sleep -Milliseconds 400;Refresh $w;$c0=G $w 'PPC_CURE_RUNS';Key 86;Start-Sleep -Milliseconds 400;Refresh $w;if((G $w 'PPC_CURE_RUNS')-le$c0){throw'Cure failed'};$rp=G $w 'PPC_R_PRESSES';Start-Sleep -Milliseconds 650;Refresh $w;if((G $w 'PPC_R_PRESSES')-ne$rp){throw'R did not pause for Cure'};Start-Sleep -Milliseconds 1450;Refresh $w;if((G $w 'PPC_R_PRESSES')-le$rp){throw'R did not resume after Cure'};PC $w 492 118
+
+          # Mode cards + master power.
+          PC $w 502 209;if((G $w 'PPC_MODE')-ne1){throw'Turbo failed'};PC $w 297 209;if((G $w 'PPC_MODE')-ne0){throw'Maximum failed'}
+          $power=C $w 1401;Pow $power;if((G $w 'PPC_POWER_ENABLED')-ne0-or(G $w 'PPC_ACTIVE')-ne0){throw'Power OFF failed'};foreach($id in 1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302){if([P]::IsWindowEnabled((C $w $id))){throw"enabled while OFF $id"}};Pow $power;if((G $w 'PPC_POWER_ENABLED')-ne1-or(G $w 'PPC_ACTIVE')-ne0){throw'Power ON failed'}
+
+          Shot $w 'ui-verified.png'
+          "SourceSHA=$((git rev-parse HEAD).Trim())"|Set-Content final-report.txt
+          @('InitialInactive=PASS','FreshCapsPersistence=PASS','CapsRelaunch=PASS','BadTabCapsRepair=PASS','CapsStateIsolation=PASS','VisibleControls=PASS','StartAssignment=PASS','StopAssignment=PASS','CureAssignment=PASS','SequenceControls=PASS','RControls=PASS','CureControls=PASS','SavePersistence=PASS','RelaunchPersistence=PASS','CustomStartStop=PASS','ComboRuntime=PASS','RRuntime=PASS','CureRuntime=PASS','CureRPauseResume=PASS','StartStopButtons=PASS','ModeCards=PASS','MasterPower=PASS','AllInteractiveControls=PASS')|Add-Content final-report.txt
+          "SHA256=$((Get-FileHash PremiumPlusCombo.exe -Algorithm SHA256).Hash)"|Add-Content final-report.txt
+          Kill $proc
+
+      - name: Verify static portable dependencies
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $d=(dumpbin /DEPENDENTS PremiumPlusCombo.exe|Out-String);$d|Set-Content final-dependencies.txt;if($d-match'VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt'){throw'external VC runtime detected'};'StaticCRT=PASS'|Add-Content final-report.txt
+
+      - name: Upload verified EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: PremiumPlusCombo-FINAL-VERIFIED-V2
+          path: |
+            tools/premium-plus-combo/PremiumPlusCombo.exe
+            tools/premium-plus-combo/final-report.txt
+            tools/premium-plus-combo/final-dependencies.txt
+            tools/premium-plus-combo/ui-before.png
+            tools/premium-plus-combo/ui-verified.png
+          if-no-files-found: error
