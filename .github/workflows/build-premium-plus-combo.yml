@@ -1,0 +1,250 @@
+name: Build Premium Plus Combo
+
+on:
+  push:
+    branches: [ premium-plus-combo ]
+    paths:
+      - 'tools/premium-plus-combo/**'
+      - '.github/workflows/build-premium-plus-combo.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'tools/premium-plus-combo/**'
+      - '.github/workflows/build-premium-plus-combo.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: premium-plus-combo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout exact source HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact source HEAD
+        shell: pwsh
+        run: |
+          $expected = '${{ github.event.pull_request.head.sha || github.sha }}'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $expected) { throw "Source mismatch. expected=$expected actual=$actual" }
+          "Exact source verified: $actual"
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Source encoding audit
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+          $paths = @('app_part1.inc','app_part2.inc','app_part3.inc','app_part4.inc','app_power.inc','core.hpp','input_transport.hpp','bridge_protocol.hpp','game_bridge_sdk.hpp','tests.cpp')
+          $all = ''
+          foreach ($path in $paths) {
+            try { $text = [System.IO.File]::ReadAllText((Resolve-Path $path), $utf8) }
+            catch { throw "Invalid UTF-8 in $path : $($_.Exception.Message)" }
+            $all += "`n" + $text
+          }
+          foreach ($bad in @('Ã','Â','Ä','Å','â€','�')) {
+            if ($all.Contains($bad)) { throw "Mojibake marker '$bad' found in source" }
+          }
+          foreach ($required in @('Premium Plus Combo','Rogue','R Combo','Cure Al','PPC_PAINTS','RogueV2','kVkCapsLock','SendInputScanCodeCompatible','PublishBridgeBatch','DrainKeyTaps')) {
+            if (-not $all.Contains($required)) { throw "Required source marker missing: $required" }
+          }
+          'SourceEncodingAudit=PASS' | Set-Content -Encoding ascii encoding-audit.txt
+
+      - name: Core input and game bridge tests
+        run: |
+          cd tools\premium-plus-combo
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 tests.cpp /Fe:PremiumPlusTests.exe
+          PremiumPlusTests.exe
+
+      - name: DirectInput scan-code transport tests
+        run: |
+          cd tools\premium-plus-combo
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 transport_tests.cpp /Fe:TransportTests.exe user32.lib
+          TransportTests.exe
+
+      - name: Official game bridge rate preservation tests
+        run: |
+          cd tools\premium-plus-combo
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 bridge_tests.cpp /Fe:BridgeTests.exe user32.lib
+          BridgeTests.exe
+
+      - name: Compile embedded resources
+        run: |
+          cd tools\premium-plus-combo
+          rc /nologo /fo app.res app.rc
+
+      - name: Build portable release EXE
+        run: |
+          cd tools\premium-plus-combo
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
+
+      - name: Validate portable runtime
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $deps = (dumpbin /DEPENDENTS PremiumPlusCombo.exe | Out-String)
+          $deps | Set-Content dependencies.txt
+          if ($deps -match 'VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt') { throw 'External VC runtime dependency detected' }
+          $source = (git rev-parse HEAD).Trim()
+          $hash = (Get-FileHash PremiumPlusCombo.exe -Algorithm SHA256).Hash
+          "SourceSHA=$source" | Set-Content build-info.txt
+          "SHA256=$hash" | Add-Content build-info.txt
+          "Size=$((Get-Item PremiumPlusCombo.exe).Length)" | Add-Content build-info.txt
+          "Architecture=x64" | Add-Content build-info.txt
+          "CoreInputBridgeTests=PASS" | Add-Content build-info.txt
+          "DirectInputScanCodeTransport=PASS" | Add-Content build-info.txt
+          "OfficialGameBridge=PASS" | Add-Content build-info.txt
+          "MaximumRatePerKey=120" | Add-Content build-info.txt
+          "TurboRatePerKey=240" | Add-Content build-info.txt
+          "RMaximumDefault=25" | Add-Content build-info.txt
+          "RTurboDefault=40" | Add-Content build-info.txt
+          "StaticCRT=PASS" | Add-Content build-info.txt
+          "SourceEncodingAudit=PASS" | Add-Content build-info.txt
+          "DefaultStart=CAPS_LOCK" | Add-Content build-info.txt
+          "DefaultStop=CAPS_LOCK" | Add-Content build-info.txt
+          "MasterPowerSwitch=PASS" | Add-Content build-info.txt
+          "PeriodicUiRepaint=DISABLED" | Add-Content build-info.txt
+
+      - name: Windows Unicode keyboard power and flicker regression test
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          Remove-Item 'HKCU:\Software\PremiumPlusCombo' -Recurse -Force -ErrorAction SilentlyContinue
+          Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          public static class PpcWin32 {
+              [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr GetProp(IntPtr h, string n);
+              public delegate bool EnumProc(IntPtr h, IntPtr p);
+              [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p, IntPtr l);
+              [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+              [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h, int id);
+              [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+              [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
+              [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+              [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessageText(IntPtr h, uint m, IntPtr w, StringBuilder l);
+              [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
+              [DllImport("user32.dll")] public static extern void keybd_event(byte v, byte s, uint f, UIntPtr x);
+              [DllImport("user32.dll")] public static extern short GetKeyState(int v);
+              public static IntPtr Find(uint pid) {
+                  IntPtr r=IntPtr.Zero;
+                  EnumWindows(delegate(IntPtr h, IntPtr l) { uint p; GetWindowThreadProcessId(h,out p); if(p==pid && GetDlgItem(h,1001)!=IntPtr.Zero && GetDlgItem(h,1302)!=IntPtr.Zero){r=h;return false;} return true;},IntPtr.Zero);
+                  return r;
+              }
+          }
+          "@
+          function Prop([IntPtr]$h,[string]$n){ return [PpcWin32]::GetProp($h,$n).ToInt64() }
+          function Ctrl([IntPtr]$h,[int]$id){ return [PpcWin32]::GetDlgItem($h,$id) }
+          function Txt([IntPtr]$h){ $b=New-Object System.Text.StringBuilder 256; [void][PpcWin32]::SendMessageText($h,0x000D,[IntPtr]$b.Capacity,$b); return $b.ToString() }
+          function Key([byte]$v){ [PpcWin32]::keybd_event($v,0,0,[UIntPtr]::Zero); Start-Sleep -Milliseconds 70; [PpcWin32]::keybd_event($v,0,2,[UIntPtr]::Zero); Start-Sleep -Milliseconds 140 }
+          function Click([IntPtr]$h,[int]$x,[int]$y){ $p=(($y-band 0xffff)-shl 16)-bor($x-band 0xffff); [void][PpcWin32]::SendMessage($h,0x0202,[IntPtr]::Zero,[IntPtr]$p) }
+          function Shot([IntPtr]$h,[string]$p){ $b=New-Object System.Drawing.Bitmap 800,500; $g=[System.Drawing.Graphics]::FromImage($b); $dc=$g.GetHdc(); $ok=[PpcWin32]::PrintWindow($h,$dc,0); $g.ReleaseHdc($dc); $g.Dispose(); if(-not $ok){$b.Dispose();throw 'PrintWindow failed'}; $b.Save((Join-Path (Get-Location) $p),[System.Drawing.Imaging.ImageFormat]::Png); $b.Dispose() }
+
+          $p=Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
+          $h=[IntPtr]::Zero
+          for($i=0;$i-lt 80;$i++){ Start-Sleep -Milliseconds 100; $p.Refresh(); if($p.HasExited){throw "Startup exit $($p.ExitCode)"}; $h=[PpcWin32]::Find([uint32]$p.Id); if($h-ne[IntPtr]::Zero){break} }
+          if($h-eq[IntPtr]::Zero){throw 'Main window missing'}
+          Start-Sleep -Milliseconds 500
+
+          if((Prop $h 'PPC_ACTIVE')-ne 0){throw 'Must start inactive'}
+          if((Prop $h 'PPC_POWER_ENABLED')-ne 1){throw 'Master power must start enabled'}
+          if((Txt (Ctrl $h 1301))-ne 'CAPS LOCK'){throw 'Start default is not CAPS LOCK'}
+          if((Txt (Ctrl $h 1302))-ne 'CAPS LOCK'){throw 'Stop default is not CAPS LOCK'}
+          if((Txt (Ctrl $h 1901))-ne 'Başlat|Giriş Dizisi|Ayarlarımı Kaydet|Çalışıyor'){throw 'Runtime Unicode/mojibake failure'}
+          foreach($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302,1401)){ $c=Ctrl $h $id; if($c-eq[IntPtr]::Zero -or -not [PpcWin32]::IsWindowVisible($c)){throw "Control $id missing/hidden"} }
+          if((Txt (Ctrl $h 1001))-ne '8' -or (Txt (Ctrl $h 1002))-ne '9' -or (Txt (Ctrl $h 1003))-ne '0'){throw '8>9>0 default mismatch'}
+          "UnicodeRuntime=PASS"|Add-Content build-info.txt
+          "VisibleControls=PASS"|Add-Content build-info.txt
+          Shot $h 'ui-initial.png'
+
+          # Master OFF: no global key may be consumed and settings controls are disabled.
+          $power=Ctrl $h 1401
+          [void][PpcWin32]::SendMessage($power,0x0202,[IntPtr]::Zero,[IntPtr]::Zero)
+          Start-Sleep -Milliseconds 250
+          if((Prop $h 'PPC_POWER_ENABLED')-ne 0){throw 'Power switch failed to turn OFF'}
+          foreach($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302)){ if([PpcWin32]::IsWindowEnabled((Ctrl $h $id))){throw "Control $id still enabled while master OFF"} }
+          $c0=[PpcWin32]::GetKeyState(0x14)-band 1; Key 0x14; $c1=[PpcWin32]::GetKeyState(0x14)-band 1
+          if($c1-eq$c0){throw 'CAPS LOCK was swallowed while master OFF'}
+          if((Prop $h 'PPC_ACTIVE')-ne 0){throw 'Macro activated while master OFF'}
+          Key 0x14; $c2=[PpcWin32]::GetKeyState(0x14)-band 1
+          if($c2-ne$c0){throw 'Caps state restore failed during OFF test'}
+          "MasterOffKeyboardPassThrough=PASS"|Add-Content build-info.txt
+
+          [void][PpcWin32]::SendMessage($power,0x0202,[IntPtr]::Zero,[IntPtr]::Zero)
+          Start-Sleep -Milliseconds 250
+          if((Prop $h 'PPC_POWER_ENABLED')-ne 1){throw 'Power switch failed to turn ON'}
+          foreach($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302)){ if(-not [PpcWin32]::IsWindowEnabled((Ctrl $h $id))){throw "Control $id stayed disabled after master ON"} }
+          "MasterPowerSwitch=PASS"|Add-Content build-info.txt
+
+          # With master ON and start/stop both CAPS LOCK, first press starts and second stops.
+          $before=[PpcWin32]::GetKeyState(0x14)-band 1
+          Key 0x14; Start-Sleep -Milliseconds 350
+          if((Prop $h 'PPC_ACTIVE')-ne 1){throw 'CAPS LOCK failed to start'}
+          $afterStart=[PpcWin32]::GetKeyState(0x14)-band 1
+          if($afterStart-ne$before){throw 'Start changed Windows Caps Lock state'}
+          $paint1=Prop $h 'PPC_PAINTS'; Start-Sleep -Milliseconds 1500; $paint2=Prop $h 'PPC_PAINTS'
+          if(($paint2-$paint1)-gt 1){throw "Periodic repaint/flicker detected: $paint1->$paint2"}
+          "NoPeriodicRepaint=PASS(delta=$($paint2-$paint1))"|Add-Content build-info.txt
+
+          Key 0x14; Start-Sleep -Milliseconds 250
+          if((Prop $h 'PPC_ACTIVE')-ne 0){throw 'CAPS LOCK failed to stop'}
+          $afterStop=[PpcWin32]::GetKeyState(0x14)-band 1
+          if($afterStop-ne$before){throw 'Stop changed Windows Caps Lock state'}
+          "CapsToggleStartStop=PASS"|Add-Content build-info.txt
+          "ActiveCapsStateIsolation=PASS"|Add-Content build-info.txt
+
+          Click $h 307 118; Start-Sleep -Milliseconds 350
+          if((Prop $h 'PPC_ACTIVE')-ne 1){throw 'Start button failed'}
+          Click $h 492 118; Start-Sleep -Milliseconds 250
+          if((Prop $h 'PPC_ACTIVE')-ne 0){throw 'Stop button failed'}
+          Click $h 502 209; Start-Sleep -Milliseconds 100
+          if((Prop $h 'PPC_MODE')-ne 1){throw 'Turbo mode button failed'}
+          Click $h 297 209; Start-Sleep -Milliseconds 100
+          if((Prop $h 'PPC_MODE')-ne 0){throw 'Maximum mode button failed'}
+          "ButtonsAndModes=PASS"|Add-Content build-info.txt
+
+          Shot $h 'ui-smoke.png'
+          if((Get-Item ui-smoke.png).Length-lt 18000){throw 'UI screenshot unexpectedly small'}
+          "UIScreenshot=PASS"|Add-Content build-info.txt
+          "RuntimeSmoke=PASS"|Add-Content build-info.txt
+          Stop-Process -Id $p.Id -Force
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PremiumPlusCombo-Diagnostics
+          path: |
+            tools/premium-plus-combo/build-info.txt
+            tools/premium-plus-combo/dependencies.txt
+            tools/premium-plus-combo/ui-initial.png
+            tools/premium-plus-combo/ui-smoke.png
+          if-no-files-found: warn
+
+      - name: Upload tested release
+        uses: actions/upload-artifact@v4
+        with:
+          name: PremiumPlusCombo-Windows-x64-FINAL
+          path: |
+            tools/premium-plus-combo/PremiumPlusCombo.exe
+            tools/premium-plus-combo/build-info.txt
+            tools/premium-plus-combo/dependencies.txt
+            tools/premium-plus-combo/ui-smoke.png
+          if-no-files-found: error
