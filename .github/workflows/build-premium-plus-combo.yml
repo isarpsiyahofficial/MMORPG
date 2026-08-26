@@ -60,7 +60,7 @@ jobs:
           foreach ($bad in @('Ã','Â','Ä','Å','â€','�')) {
             if ($all.Contains($bad)) { throw "Mojibake marker '$bad' found in source" }
           }
-          foreach ($required in @('Premium Plus Combo','Rogue','R Combo','Cure Al','PPC_PAINTS','RogueV2','kVkTab','kVkCapsLock','SendInputScanCodeCompatible','PublishBridgeBatch','DrainKeyTaps')) {
+          foreach ($required in @('Premium Plus Combo','Rogue','R Combo','Cure Al','PPC_PAINTS','RogueV2','kVkCapsLock','SendInputScanCodeCompatible','PublishBridgeBatch','DrainKeyTaps')) {
             if (-not $all.Contains($required)) { throw "Required source marker missing: $required" }
           }
           'SourceEncodingAudit=PASS' | Set-Content -Encoding ascii encoding-audit.txt
@@ -115,7 +115,7 @@ jobs:
           "RTurboDefault=40" | Add-Content build-info.txt
           "StaticCRT=PASS" | Add-Content build-info.txt
           "SourceEncodingAudit=PASS" | Add-Content build-info.txt
-          "DefaultStart=TAB" | Add-Content build-info.txt
+          "DefaultStart=CAPS_LOCK" | Add-Content build-info.txt
           "DefaultStop=CAPS_LOCK" | Add-Content build-info.txt
           "MasterPowerSwitch=PASS" | Add-Content build-info.txt
           "PeriodicUiRepaint=DISABLED" | Add-Content build-info.txt
@@ -165,7 +165,7 @@ jobs:
 
           if((Prop $h 'PPC_ACTIVE')-ne 0){throw 'Must start inactive'}
           if((Prop $h 'PPC_POWER_ENABLED')-ne 1){throw 'Master power must start enabled'}
-          if((Txt (Ctrl $h 1301))-ne 'TAB'){throw 'Start default is not TAB'}
+          if((Txt (Ctrl $h 1301))-ne 'CAPS LOCK'){throw 'Start default is not CAPS LOCK'}
           if((Txt (Ctrl $h 1302))-ne 'CAPS LOCK'){throw 'Stop default is not CAPS LOCK'}
           if((Txt (Ctrl $h 1901))-ne 'Başlat|Giriş Dizisi|Ayarlarımı Kaydet|Çalışıyor'){throw 'Runtime Unicode/mojibake failure'}
           foreach($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302,1401)){ $c=Ctrl $h $id; if($c-eq[IntPtr]::Zero -or -not [PpcWin32]::IsWindowVisible($c)){throw "Control $id missing/hidden"} }
@@ -193,12 +193,12 @@ jobs:
           foreach($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302)){ if(-not [PpcWin32]::IsWindowEnabled((Ctrl $h $id))){throw "Control $id stayed disabled after master ON"} }
           "MasterPowerSwitch=PASS"|Add-Content build-info.txt
 
-          # With master ON, TAB starts and CAPS LOCK stops. Caps toggle state must not change.
+          # With master ON and start/stop both CAPS LOCK, first press starts and second stops.
           $before=[PpcWin32]::GetKeyState(0x14)-band 1
-          Key 0x09; Start-Sleep -Milliseconds 350
-          if((Prop $h 'PPC_ACTIVE')-ne 1){throw 'TAB failed to start'}
+          Key 0x14; Start-Sleep -Milliseconds 350
+          if((Prop $h 'PPC_ACTIVE')-ne 1){throw 'CAPS LOCK failed to start'}
           $afterStart=[PpcWin32]::GetKeyState(0x14)-band 1
-          if($afterStart-ne$before){throw 'TAB start changed Windows Caps Lock state'}
+          if($afterStart-ne$before){throw 'Start changed Windows Caps Lock state'}
           $paint1=Prop $h 'PPC_PAINTS'; Start-Sleep -Milliseconds 1500; $paint2=Prop $h 'PPC_PAINTS'
           if(($paint2-$paint1)-gt 1){throw "Periodic repaint/flicker detected: $paint1->$paint2"}
           "NoPeriodicRepaint=PASS(delta=$($paint2-$paint1))"|Add-Content build-info.txt
@@ -207,7 +207,7 @@ jobs:
           if((Prop $h 'PPC_ACTIVE')-ne 0){throw 'CAPS LOCK failed to stop'}
           $afterStop=[PpcWin32]::GetKeyState(0x14)-band 1
           if($afterStop-ne$before){throw 'Stop changed Windows Caps Lock state'}
-          "TabStartCapsStop=PASS"|Add-Content build-info.txt
+          "CapsToggleStartStop=PASS"|Add-Content build-info.txt
           "ActiveCapsStateIsolation=PASS"|Add-Content build-info.txt
 
           Click $h 307 118; Start-Sleep -Milliseconds 350
