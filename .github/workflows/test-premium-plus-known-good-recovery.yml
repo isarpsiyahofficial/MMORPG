@@ -89,7 +89,7 @@ jobs:
           }
           int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int){
             HHOOK hook=SetWindowsHookExW(WH_KEYBOARD_LL,Hook,h,0); if(!hook)return 2;
-            const ULONGLONG end=GetTickCount64()+8000; MSG msg{};
+            const ULONGLONG end=GetTickCount64()+9000; MSG msg{};
             while(GetTickCount64()<end){while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}Sleep(1);}
             UnhookWindowsHookEx(hook);
             FILE* f=nullptr;_wfopen_s(&f,L"game-keys-observed.txt",L"w, ccs=UTF-8");if(!f)return 3;
@@ -125,7 +125,7 @@ jobs:
           function T([IntPtr]$h){$b=New-Object Text.StringBuilder 256;[void][W]::GetText($h,0x000D,[IntPtr]$b.Capacity,$b);$b.ToString()}
           function P([IntPtr]$w,[string]$n){[W]::GetProp($w,$n).ToInt64()}
           function Click([IntPtr]$w,[int]$x,[int]$y){$lp=(($y-band65535)-shl16)-bor($x-band65535);[void][W]::SendMessage($w,0x0202,[IntPtr]::Zero,[IntPtr]$lp);Start-Sleep -Milliseconds 160}
-          function Key([byte]$v){[W]::keybd_event($v,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 80;[W]::keybd_event($v,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 160}
+          function Key([byte]$v){[W]::keybd_event($v,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 80;[W]::keybd_event($v,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 180}
           function Shot([IntPtr]$w){$b=New-Object Drawing.Bitmap 800,500;$g=[Drawing.Graphics]::FromImage($b);$dc=$g.GetHdc();$ok=[W]::PrintWindow($w,$dc,0);$g.ReleaseHdc($dc);$g.Dispose();if(-not$ok){throw'PrintWindow failed'};$b.Save((Join-Path (Get-Location)'known-good-ui.png'),[Drawing.Imaging.ImageFormat]::Png);$b.Dispose()}
 
           $observer=Start-Process (Resolve-Path .\GameKeyObserver.exe) -PassThru
@@ -141,6 +141,13 @@ jobs:
           if((T(C $w 1301))-ne'CAPS LOCK'-or(T(C $w 1302))-ne'CAPS LOCK'){throw'known-good hotkeys changed'}
           Shot $w
 
+          # Real shipped global default: CAPS LOCK toggles Start/Stop without auto-run.
+          Key 0x14
+          if((P $w 'PPC_ACTIVE')-ne1){throw'CAPS LOCK global start failed'}
+          Key 0x14
+          if((P $w 'PPC_ACTIVE')-ne0){throw'CAPS LOCK global stop failed'}
+
+          # Run the repaired synthetic game-key path and Cure.
           Click $w 307 118
           Start-Sleep -Milliseconds 1300
           Key 0x43
@@ -165,6 +172,7 @@ jobs:
           if($ov-ne0){throw"overlapping synthetic game keys detected: $ov"}
           "TurkishUiExactKnownGood=PASS"|Add-Content ../../recovery-report.txt
           "InitialInactive=PASS"|Add-Content ../../recovery-report.txt
+          "CapsGlobalToggle=PASS"|Add-Content ../../recovery-report.txt
           "Combo8=$n8 Combo9=$n9 Combo0=$n0"|Add-Content ../../recovery-report.txt
           "R=$nr CureF2=$nf2 CureSlot6=$n6 CureRestoreF1=$nf1"|Add-Content ../../recovery-report.txt
           "NoSyntheticKeyOverlap=PASS"|Add-Content ../../recovery-report.txt
