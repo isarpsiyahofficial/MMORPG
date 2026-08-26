@@ -55,9 +55,14 @@ int main() {
     assert(s.rRateMaximum == 1);
     assert(s.rRateTurbo == 100);
     assert(s.cureBar == 1);
-    assert(s.cureSlot == 8);
+    assert(s.cureSlot == 10);
     assert(s.startHotkey == kVkCapsLock);
     assert(s.stopHotkey == kVkCapsLock);
+
+    Settings cureZero;
+    cureZero.cureSlot = 10;
+    cureZero = sanitize(cureZero);
+    assert(cureZero.cureSlot == 10);
 
     const std::int64_t freq = 10'000'000;
     const std::int64_t now = 5 * freq;
