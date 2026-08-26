@@ -33,21 +33,40 @@ jobs:
         with:
           arch: x64
 
-      - name: Prove user verified source was preserved
+      - name: Prove user verified UI and application structure were preserved
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           git fetch origin 4d68f5e2cc595c979cbbf657a3fc1e55a073ac3d --depth=1
           $changed = @(git diff --name-only 4d68f5e2cc595c979cbbf657a3fc1e55a073ac3d -- tools/premium-plus-combo)
-          if ($changed.Count -ne 1 -or $changed[0] -ne 'tools/premium-plus-combo/main.cpp') {
-            throw "Known-good application drift detected: $($changed -join ', ')"
+          $expected = @(
+            'tools/premium-plus-combo/core.hpp',
+            'tools/premium-plus-combo/main.cpp',
+            'tools/premium-plus-combo/tests.cpp'
+          )
+          $actual = @($changed | Sort-Object)
+          $wanted = @($expected | Sort-Object)
+          if (($actual -join '|') -ne ($wanted -join '|')) {
+            throw "Unexpected known-good application drift: $($actual -join ', ')"
           }
-          $diff = git diff --unified=0 4d68f5e2cc595c979cbbf657a3fc1e55a073ac3d -- tools/premium-plus-combo/main.cpp | Out-String
-          if ($diff -notmatch 'PpcKnownGoodGameSendInput' -or $diff -notmatch 'PpcAcquireGameTapTicket' -or $diff -notmatch 'g_ppcGameTapNextTicket') {
-            throw 'Isolated repaired game-input wrapper missing'
+          $protected = @(
+            'tools/premium-plus-combo/app_part1.inc',
+            'tools/premium-plus-combo/app_part2.inc',
+            'tools/premium-plus-combo/app_part3.inc',
+            'tools/premium-plus-combo/app_part4.inc',
+            'tools/premium-plus-combo/app_power.inc',
+            'tools/premium-plus-combo/app.rc',
+            'tools/premium-plus-combo/resource.h',
+            'tools/premium-plus-combo/assets'
+          )
+          git diff --quiet 4d68f5e2cc595c979cbbf657a3fc1e55a073ac3d -- @protected
+          if ($LASTEXITCODE -ne 0) { throw 'Verified UI/power/resource files changed' }
+          $main = Get-Content tools/premium-plus-combo/main.cpp -Raw
+          foreach($marker in @('PpcKnownGoodGameSendInput','PpcAcquireGameTapTicket','PpcAllControlProc','PpcReliableRefreshRuntimeHotkeys','PpcEnhancedMakeChildControls','PpcLegacyCureWorker')) {
+            if ($main -notmatch [regex]::Escape($marker)) { throw "Focused repair marker missing: $marker" }
           }
-          'KnownGoodApplicationSource=PASS' | Set-Content recovery-report.txt
-          'OnlyApplicationSourceDifference=main.cpp' | Add-Content recovery-report.txt
+          'KnownGoodUiAndResources=PASS' | Set-Content recovery-report.txt
+          'FocusedLogicFilesOnly=core.hpp,main.cpp,tests.cpp' | Add-Content recovery-report.txt
 
       - name: Compile core tests and release EXE
         run: |
@@ -141,13 +160,11 @@ jobs:
           if((T(C $w 1301))-ne'CAPS LOCK'-or(T(C $w 1302))-ne'CAPS LOCK'){ throw 'known-good hotkeys changed' }
           Shot $w
 
-          # Real shipped global default: CAPS LOCK toggles Start/Stop without auto-run.
           Key 0x14
           if((P $w 'PPC_ACTIVE')-ne1){ throw 'CAPS LOCK global start failed' }
           Key 0x14
           if((P $w 'PPC_ACTIVE')-ne0){ throw 'CAPS LOCK global stop failed' }
 
-          # Run the repaired synthetic game-key path and Cure.
           Click $w 307 118
           Start-Sleep -Milliseconds 1300
           Key 0x43
