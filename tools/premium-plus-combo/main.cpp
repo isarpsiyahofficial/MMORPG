@@ -1,4 +1,5 @@
 #include "input_transport.hpp"
+#include <atomic>
 
 // Keep the user-verified known-good application/UI exactly as it was. Only the
 // synthetic game-facing keyboard transport is changed here.
@@ -8,7 +9,25 @@
 // only the first combo slot or miss a single-key pulse completely. The fallback
 // below emits one complete scan-code tap at a time, so combo, R and Cure workers
 // cannot overlap each other's key-down states.
-static SRWLOCK g_ppcGameTapLock = SRWLOCK_INIT;
+//
+// A plain SRWLOCK can favor the continuously busy combo worker and starve the R
+// or Cure worker. Use a tiny FIFO ticket gate instead: each complete key tap gets
+// its turn in arrival order, preserving serialization without starving R/Cure.
+static std::atomic<unsigned long> g_ppcGameTapNextTicket{0};
+static std::atomic<unsigned long> g_ppcGameTapServing{0};
+
+static unsigned long PpcAcquireGameTapTicket() noexcept {
+    const unsigned long ticket =
+        g_ppcGameTapNextTicket.fetch_add(1, std::memory_order_relaxed);
+    while (g_ppcGameTapServing.load(std::memory_order_acquire) != ticket) {
+        SwitchToThread();
+    }
+    return ticket;
+}
+
+static void PpcReleaseGameTapTicket(unsigned long ticket) noexcept {
+    g_ppcGameTapServing.store(ticket + 1, std::memory_order_release);
+}
 
 static void PpcGamePulseWaitMicros(int microseconds) noexcept {
     if (microseconds <= 0) return;
@@ -71,12 +90,11 @@ static UINT PpcKnownGoodGameSendInput(UINT count, LPINPUT inputs, int cbSize) no
     UINT i = 0;
     while (i < count) {
         const bool pair = (i + 1 < count) && PpcMatchingTapPair(inputs[i], inputs[i + 1]);
-
-        AcquireSRWLockExclusive(&g_ppcGameTapLock);
+        const unsigned long ticket = PpcAcquireGameTapTicket();
 
         const UINT first = ppc_input::SendInputScanCodeCompatible(1, inputs + i, cbSize);
         if (first != 1) {
-            ReleaseSRWLockExclusive(&g_ppcGameTapLock);
+            PpcReleaseGameTapTicket(ticket);
             return delivered;
         }
         ++delivered;
@@ -92,7 +110,7 @@ static UINT PpcKnownGoodGameSendInput(UINT count, LPINPUT inputs, int cbSize) no
                 second = ppc_input::SendInputScanCodeCompatible(1, inputs + i + 1, cbSize);
             }
             if (second != 1) {
-                ReleaseSRWLockExclusive(&g_ppcGameTapLock);
+                PpcReleaseGameTapTicket(ticket);
                 return delivered;
             }
             ++delivered;
@@ -103,7 +121,7 @@ static UINT PpcKnownGoodGameSendInput(UINT count, LPINPUT inputs, int cbSize) no
             ++i;
         }
 
-        ReleaseSRWLockExclusive(&g_ppcGameTapLock);
+        PpcReleaseGameTapTicket(ticket);
     }
 
     return delivered;
