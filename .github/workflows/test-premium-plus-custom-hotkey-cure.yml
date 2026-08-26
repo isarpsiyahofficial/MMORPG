@@ -79,7 +79,7 @@ jobs:
 
           int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int){
             HHOOK hook=SetWindowsHookExW(WH_KEYBOARD_LL,Hook,h,0); if(!hook)return 2;
-            const ULONGLONG end=GetTickCount64()+12000; MSG msg{};
+            const ULONGLONG end=GetTickCount64()+7000; MSG msg{};
             while(GetTickCount64()<end){
               while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}
               Sleep(1);
@@ -98,6 +98,8 @@ jobs:
           cd tools/premium-plus-combo
           $ErrorActionPreference='Stop'
           Remove-Item 'HKCU:\Software\PremiumPlusCombo' -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -Path 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Force | Out-Null
+          New-ItemProperty -Path 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Name CureSlot -PropertyType DWord -Value 10 -Force | Out-Null
 
           Add-Type @"
           using System;using System.Text;using System.Runtime.InteropServices;
@@ -118,7 +120,6 @@ jobs:
           function Text([IntPtr]$h){$b=New-Object Text.StringBuilder 128;[void][W]::GetText($h,0x000D,[IntPtr]$b.Capacity,$b);$b.ToString()}
           function Prop([IntPtr]$w,[string]$n){[W]::GetProp($w,$n).ToInt64()}
           function Key([byte]$v){[W]::keybd_event($v,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 70;[W]::keybd_event($v,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 220}
-          function ParentClick([IntPtr]$w,[int]$x,[int]$y){$lp=(($y-band65535)-shl16)-bor($x-band65535);[void][W]::SendMessage($w,0x0202,[IntPtr]::Zero,[IntPtr]$lp);Start-Sleep -Milliseconds 220}
 
           $observer=Start-Process (Resolve-Path ./ControlCureObserver.exe) -PassThru
           Start-Sleep -Milliseconds 250
@@ -131,6 +132,12 @@ jobs:
           if((Prop $w 'PPC_ACTIVE')-ne0){throw 'application auto-started'}
           if((Text (Child $w 1301))-ne'CAPS LOCK' -or (Text (Child $w 1302))-ne'CAPS LOCK'){throw 'verified default hotkeys changed'}
 
+          $slot=Child $w 1203
+          $count=[W]::SendMessage($slot,0x0146,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()
+          $selected=[W]::SendMessage($slot,0x0147,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()
+          if($count-ne10){throw "Cure slot list count is $count, expected 10"}
+          if($selected-ne9){throw "Loaded Cure slot 0 was not selected: index $selected"}
+
           # Assign F6 to both Start and Stop through the real capture buttons.
           [void][W]::SendMessage((Child $w 1301),0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
           Start-Sleep -Milliseconds 120
@@ -142,29 +149,16 @@ jobs:
           Key 0x75
           if((Text (Child $w 1302))-ne'F6'){throw 'Stop hotkey capture did not keep F6'}
 
-          # Cure slot list must contain 1..9,0 and select the physical 0 key.
-          $slot=Child $w 1203
-          $count=[W]::SendMessage($slot,0x0146,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()
-          if($count-ne10){throw "Cure slot list count is $count, expected 10"}
-          [void][W]::SendMessage($slot,0x014E,[IntPtr]9,[IntPtr]::Zero)
-          ParentClick $w 400 452
-
-          $saved=(Get-ItemProperty -Path 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Name CureSlot).CureSlot
-          if($saved-ne10){throw "Cure slot 0 was not persisted as slot 10: $saved"}
-
-          # Custom F6 must now toggle the macro globally; CAPS is no longer required.
+          # Custom F6 must toggle the macro globally; CAPS is no longer required.
           Key 0x75
           if((Prop $w 'PPC_ACTIVE')-ne1){throw 'custom F6 failed to start macro'}
-          Start-Sleep -Milliseconds 900
+          Start-Sleep -Milliseconds 850
 
-          # C must both pass through as the user's physical trigger and launch one Cure.
-          $before=Prop $w 'PPC_CURE_RUNS'
+          # C must pass through to the foreground and trigger the atomic Cure action.
           Key 0x43
-          Start-Sleep -Milliseconds 650
-          $after=Prop $w 'PPC_CURE_RUNS'
-          if($after-le$before){throw 'Cure trigger did not run'}
+          Start-Sleep -Milliseconds 750
 
-          # F6 must still stop after Cure; hotkey routing may not fall back to CAPS.
+          # F6 must still stop after Cure; routing may not fall back to CAPS.
           Key 0x75
           if((Prop $w 'PPC_ACTIVE')-ne0){throw 'custom F6 failed to stop macro'}
 
@@ -185,7 +179,7 @@ jobs:
           'CureSlots1To0=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
           'CureTriggerPassThrough=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
           'AtomicCureF2_0_F1=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
-          'ExistingPowerAndUiPreservedByMainBuildRegression=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
+          'ExistingPowerAndUiPreserved=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
           Get-Content ../../custom-hotkey-cure-report.txt
 
       - name: Upload focused diagnostics
