@@ -1,0 +1,163 @@
+name: Premium Plus Power Regression
+
+on:
+  push:
+    branches: [ premium-plus-combo ]
+    paths:
+      - 'tools/premium-plus-combo/**'
+      - '.github/workflows/premium-plus-power-regression.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: premium-plus-power-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  power-gate:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build portable EXE
+        shell: cmd
+        run: |
+          cd tools\premium-plus-combo
+          rc /nologo /fo app.res app.rc
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
+
+      - name: Verify master OFF hard-disables every function
+        run: |
+          cd tools/premium-plus-combo
+          Remove-Item 'HKCU:\Software\PremiumPlusCombo' -Recurse -Force -ErrorAction SilentlyContinue
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class PpcPowerTest {
+              public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+              [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lp);
+              [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+              [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr hWnd, int id);
+              [DllImport("user32.dll")] public static extern IntPtr GetProp(IntPtr hWnd, string name);
+              [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+              [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hWnd);
+              [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wp, IntPtr lp);
+              [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+              [DllImport("user32.dll")] public static extern short GetKeyState(int vk);
+              [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+              [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+              [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; }
+              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int x, y; }
+              public static IntPtr FindMain(uint wanted) {
+                  IntPtr result = IntPtr.Zero;
+                  EnumWindows(delegate(IntPtr h, IntPtr l) {
+                      uint pid; GetWindowThreadProcessId(h, out pid);
+                      if (pid == wanted && GetDlgItem(h, 1001) != IntPtr.Zero && GetDlgItem(h, 1401) != IntPtr.Zero) { result = h; return false; }
+                      return true;
+                  }, IntPtr.Zero);
+                  return result;
+              }
+          }
+          "@
+
+          function Prop([IntPtr]$h, [string]$n) { [PpcPowerTest]::GetProp($h,$n).ToInt64() }
+          function Press([byte]$vk) {
+              [PpcPowerTest]::keybd_event($vk,0,0,[UIntPtr]::Zero)
+              Start-Sleep -Milliseconds 60
+              [PpcPowerTest]::keybd_event($vk,0,2,[UIntPtr]::Zero)
+              Start-Sleep -Milliseconds 140
+          }
+
+          $p = Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
+          $h = [IntPtr]::Zero
+          for ($i=0; $i -lt 80; $i++) {
+              Start-Sleep -Milliseconds 100
+              $p.Refresh()
+              if ($p.HasExited) { throw "App exited during startup: $($p.ExitCode)" }
+              $h = [PpcPowerTest]::FindMain([uint32]$p.Id)
+              if ($h -ne [IntPtr]::Zero) { break }
+          }
+          if ($h -eq [IntPtr]::Zero) { throw 'Main window not found' }
+
+          $switch = [PpcPowerTest]::GetDlgItem($h,1401)
+          $overlay = [PpcPowerTest]::GetDlgItem($h,1402)
+          if ($switch -eq [IntPtr]::Zero -or $overlay -eq [IntPtr]::Zero) { throw 'Power switch/overlay missing' }
+          if ((Prop $h 'PPC_POWER_ENABLED') -ne 1) { throw 'App did not start master-enabled' }
+          if ([PpcPowerTest]::IsWindowVisible($overlay)) { throw 'OFF overlay visible while master ON' }
+
+          # Click switch -> OFF.
+          [void][PpcPowerTest]::SendMessage($switch,0x0202,[IntPtr]::Zero,[IntPtr]::Zero)
+          Start-Sleep -Milliseconds 250
+          if ((Prop $h 'PPC_POWER_ENABLED') -ne 0) { throw 'Switch did not enter OFF state' }
+          if ((Prop $h 'PPC_ACTIVE') -ne 0) { throw 'Macro remained active after master OFF' }
+          if (-not [PpcPowerTest]::IsWindowVisible($overlay)) { throw 'OFF overlay is not visible' }
+
+          foreach ($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302)) {
+              $c = [PpcPowerTest]::GetDlgItem($h,$id)
+              if ([PpcPowerTest]::IsWindowEnabled($c)) { throw "Control $id remained enabled while master OFF" }
+          }
+
+          # Physical clicks on the central Start area must hit the blocker, not the parent.
+          $r = New-Object PpcPowerTest+RECT
+          [void][PpcPowerTest]::GetWindowRect($h,[ref]$r)
+          $pt = New-Object PpcPowerTest+POINT
+          $pt.x = $r.left + 300; $pt.y = $r.top + 118
+          $hit = [PpcPowerTest]::WindowFromPoint($pt)
+          if ($hit -ne $overlay) { throw "OFF blocker does not own Start-area hit test; hit=$hit overlay=$overlay" }
+
+          $caps0 = [PpcPowerTest]::GetKeyState(0x14) -band 1
+          Press 0x09   # TAB must be inert while OFF even if assigned in an older profile
+          Press 0x43   # C / Cure must be inert while OFF
+          Press 0x14   # CAPS LOCK must be ordinary Windows key while OFF
+          Start-Sleep -Milliseconds 250
+          if ((Prop $h 'PPC_ACTIVE') -ne 0) { throw 'A global control key activated macro while master OFF' }
+          if ((Prop $h 'PPC_CURE_RUNS') -ne 0) { throw 'Cure ran while master OFF' }
+          if ((Prop $h 'PPC_COMBO_BURSTS') -ne 0 -or (Prop $h 'PPC_R_PRESSES') -ne 0) { throw 'Macro output occurred while master OFF' }
+          $caps1 = [PpcPowerTest]::GetKeyState(0x14) -band 1
+          if ($caps1 -eq $caps0) { throw 'CAPS LOCK was swallowed while master OFF' }
+          Press 0x14 # restore Windows Caps state
+
+          # Click switch -> ON. Controls and hotkeys must return, but macro must stay stopped.
+          [void][PpcPowerTest]::SendMessage($switch,0x0202,[IntPtr]::Zero,[IntPtr]::Zero)
+          Start-Sleep -Milliseconds 250
+          if ((Prop $h 'PPC_POWER_ENABLED') -ne 1) { throw 'Switch did not return to ON state' }
+          if ((Prop $h 'PPC_ACTIVE') -ne 0) { throw 'Master ON auto-started macro' }
+          if ([PpcPowerTest]::IsWindowVisible($overlay)) { throw 'OFF overlay remained visible after ON' }
+          foreach ($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302)) {
+              if (-not [PpcPowerTest]::IsWindowEnabled([PpcPowerTest]::GetDlgItem($h,$id))) { throw "Control $id did not re-enable" }
+          }
+
+          # Shipped default is CAPS LOCK for both start and stop. First press starts,
+          # second press stops; both must be consumed as control presses while ON.
+          $capsBeforeControl = [PpcPowerTest]::GetKeyState(0x14) -band 1
+          Press 0x14
+          Start-Sleep -Milliseconds 350
+          if ((Prop $h 'PPC_ACTIVE') -ne 1) { throw 'CAPS LOCK did not start after master ON' }
+          $capsAfterStart = [PpcPowerTest]::GetKeyState(0x14) -band 1
+          if ($capsAfterStart -ne $capsBeforeControl) { throw 'CAPS LOCK toggled Windows state while acting as Start' }
+          Press 0x14
+          Start-Sleep -Milliseconds 250
+          if ((Prop $h 'PPC_ACTIVE') -ne 0) { throw 'CAPS LOCK did not stop after master ON' }
+          $capsAfterStop = [PpcPowerTest]::GetKeyState(0x14) -band 1
+          if ($capsAfterStop -ne $capsBeforeControl) { throw 'CAPS LOCK toggled Windows state while acting as Stop' }
+
+          'MasterPowerGate=PASS'
+          'OffDisablesControls=PASS'
+          'OffDisablesAllHotkeys=PASS'
+          'OffCapsPassThrough=PASS'
+          'CapsToggleStartStop=PASS'
+          'OnRestoresControlsAndHotkeys=PASS'
+          Stop-Process -Id $p.Id -Force

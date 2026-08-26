@@ -1,0 +1,192 @@
+name: Verify Premium Plus Custom Hotkey and Cure
+
+on:
+  push:
+    branches: [ premium-plus-combo ]
+    paths:
+      - 'tools/premium-plus-combo/**'
+      - '.github/workflows/test-premium-plus-custom-hotkey-cure.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'tools/premium-plus-combo/**'
+      - '.github/workflows/test-premium-plus-custom-hotkey-cure.yml'
+  workflow_dispatch:
+
+jobs:
+  custom-hotkey-cure:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build portable release
+        run: |
+          cd tools/premium-plus-combo
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 tests.cpp /Fe:PremiumPlusTests.exe
+          ./PremiumPlusTests.exe
+          rc /nologo /fo app.res app.rc
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
+
+      - name: Build keyboard sequence observer
+        run: |
+          cd tools/premium-plus-combo
+          @'
+          #define NOMINMAX
+          #include <windows.h>
+          #include <cstdio>
+          #include <mutex>
+          #include <string>
+          #include <vector>
+
+          std::mutex gate;
+          std::vector<std::wstring> injected;
+          unsigned long long physicalLikeC=0;
+
+          std::wstring Name(DWORD vk){
+            if(vk==VK_F1)return L"F1";
+            if(vk==VK_F2)return L"F2";
+            if(vk>='0'&&vk<='9')return std::wstring(1,(wchar_t)vk);
+            if(vk=='R')return L"R";
+            return L"";
+          }
+
+          LRESULT CALLBACK Hook(int code,WPARAM wp,LPARAM lp){
+            if(code==HC_ACTION && lp && (wp==WM_KEYDOWN||wp==WM_SYSKEYDOWN)){
+              const auto* k=reinterpret_cast<const KBDLLHOOKSTRUCT*>(lp);
+              const auto n=Name(k->vkCode);
+              if(k->vkCode=='C' && k->dwExtraInfo!=0x5050434F4D424FULL) ++physicalLikeC;
+              if(!n.empty() && k->dwExtraInfo==0x5050434F4D424FULL){
+                std::lock_guard<std::mutex> lk(gate);
+                injected.push_back(n);
+              }
+            }
+            return CallNextHookEx(nullptr,code,wp,lp);
+          }
+
+          int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int){
+            HHOOK hook=SetWindowsHookExW(WH_KEYBOARD_LL,Hook,h,0); if(!hook)return 2;
+            const ULONGLONG end=GetTickCount64()+7000; MSG msg{};
+            while(GetTickCount64()<end){
+              while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}
+              Sleep(1);
+            }
+            UnhookWindowsHookEx(hook);
+            FILE* f=nullptr;_wfopen_s(&f,L"control-cure-observed.txt",L"w, ccs=UTF-8");if(!f)return 3;
+            fwprintf(f,L"PhysicalLikeC=%llu\nSequence=",physicalLikeC);
+            for(size_t i=0;i<injected.size();++i){if(i)fwprintf(f,L",");fwprintf(f,L"%ls",injected[i].c_str());}
+            fwprintf(f,L"\n");fclose(f);return 0;
+          }
+          '@ | Set-Content -Encoding utf8 control_cure_observer.cpp
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE control_cure_observer.cpp /Fe:ControlCureObserver.exe /link /SUBSYSTEM:WINDOWS user32.lib
+
+      - name: Exercise F6 toggle hotkey and Cure slot 0
+        run: |
+          cd tools/premium-plus-combo
+          $ErrorActionPreference='Stop'
+          Remove-Item 'HKCU:\Software\PremiumPlusCombo' -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -Path 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Force | Out-Null
+          New-ItemProperty -Path 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Name CureSlot -PropertyType DWord -Value 10 -Force | Out-Null
+
+          Add-Type @"
+          using System;using System.Text;using System.Runtime.InteropServices;
+          public static class W{
+            public delegate bool EP(IntPtr h,IntPtr p);
+            [DllImport("user32.dll")]public static extern bool EnumWindows(EP p,IntPtr l);
+            [DllImport("user32.dll")]public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);
+            [DllImport("user32.dll")]public static extern IntPtr GetDlgItem(IntPtr h,int id);
+            [DllImport("user32.dll")]public static extern IntPtr SendMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageW")]public static extern IntPtr GetText(IntPtr h,uint m,IntPtr w,StringBuilder b);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode)]public static extern IntPtr GetProp(IntPtr h,string n);
+            [DllImport("user32.dll")]public static extern void keybd_event(byte v,byte s,uint f,UIntPtr x);
+            public static IntPtr Main(uint pid){IntPtr r=IntPtr.Zero;EnumWindows(delegate(IntPtr h,IntPtr l){uint p;GetWindowThreadProcessId(h,out p);if(p==pid&&GetDlgItem(h,1001)!=IntPtr.Zero){r=h;return false;}return true;},IntPtr.Zero);return r;}
+          }
+          "@
+
+          function Child([IntPtr]$w,[int]$id){[W]::GetDlgItem($w,$id)}
+          function Text([IntPtr]$h){$b=New-Object Text.StringBuilder 128;[void][W]::GetText($h,0x000D,[IntPtr]$b.Capacity,$b);$b.ToString()}
+          function Prop([IntPtr]$w,[string]$n){[W]::GetProp($w,$n).ToInt64()}
+          function Key([byte]$v){[W]::keybd_event($v,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 70;[W]::keybd_event($v,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 220}
+
+          $observer=Start-Process (Resolve-Path ./ControlCureObserver.exe) -PassThru
+          Start-Sleep -Milliseconds 250
+          $app=Start-Process (Resolve-Path ./PremiumPlusCombo.exe) -PassThru
+          $w=[IntPtr]::Zero
+          for($i=0;$i-lt80;$i++){Start-Sleep -Milliseconds 100;$app.Refresh();if($app.HasExited){throw "app exited $($app.ExitCode)"};$w=[W]::Main([uint32]$app.Id);if($w-ne[IntPtr]::Zero){break}}
+          if($w-eq[IntPtr]::Zero){throw 'main window missing'}
+          Start-Sleep -Milliseconds 350
+
+          if((Prop $w 'PPC_ACTIVE')-ne0){throw 'application auto-started'}
+          if((Text (Child $w 1301))-ne'CAPS LOCK' -or (Text (Child $w 1302))-ne'CAPS LOCK'){throw 'verified default hotkeys changed'}
+
+          $slot=Child $w 1203
+          $count=[W]::SendMessage($slot,0x0146,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()
+          $selected=[W]::SendMessage($slot,0x0147,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()
+          if($count-ne10){throw "Cure slot list count is $count, expected 10"}
+          if($selected-ne9){throw "Loaded Cure slot 0 was not selected: index $selected"}
+
+          # Assign F6 to both Start and Stop through the real capture buttons.
+          [void][W]::SendMessage((Child $w 1301),0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+          Start-Sleep -Milliseconds 120
+          Key 0x75
+          if((Text (Child $w 1301))-ne'F6'){throw 'Start hotkey capture did not keep F6'}
+
+          [void][W]::SendMessage((Child $w 1302),0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+          Start-Sleep -Milliseconds 120
+          Key 0x75
+          if((Text (Child $w 1302))-ne'F6'){throw 'Stop hotkey capture did not keep F6'}
+
+          # Custom F6 must toggle the macro globally; CAPS is no longer required.
+          Key 0x75
+          if((Prop $w 'PPC_ACTIVE')-ne1){throw 'custom F6 failed to start macro'}
+          Start-Sleep -Milliseconds 850
+
+          # C must pass through to the foreground and trigger the atomic Cure action.
+          Key 0x43
+          Start-Sleep -Milliseconds 750
+
+          # F6 must still stop after Cure; routing may not fall back to CAPS.
+          Key 0x75
+          if((Prop $w 'PPC_ACTIVE')-ne0){throw 'custom F6 failed to stop macro'}
+
+          Stop-Process -Id $app.Id -Force
+          $observer.WaitForExit()
+          if($observer.ExitCode-ne0){throw "observer exit $($observer.ExitCode)"}
+
+          $txt=Get-Content control-cure-observed.txt -Raw
+          Write-Host $txt
+          $cm=[regex]::Match($txt,'(?m)^PhysicalLikeC=(\d+)\s*$')
+          if(-not$cm.Success-or[int64]$cm.Groups[1].Value-lt1){throw 'assigned Cure trigger C was swallowed instead of passing to the game'}
+          $sm=[regex]::Match($txt,'(?m)^Sequence=(.*)$')
+          if(-not$sm.Success){throw 'missing injected sequence'}
+          $sequence=$sm.Groups[1].Value
+          if($sequence-notmatch '(^|,)F2,0,F1(,|$)'){throw "Cure F2 -> 0 -> F1 was not atomic: $sequence"}
+
+          'CustomHotkeyF6Toggle=PASS' | Set-Content ../../custom-hotkey-cure-report.txt
+          'CureSlots1To0=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
+          'CureTriggerPassThrough=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
+          'AtomicCureF2_0_F1=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
+          'ExistingPowerAndUiPreserved=PASS' | Add-Content ../../custom-hotkey-cure-report.txt
+          Get-Content ../../custom-hotkey-cure-report.txt
+
+      - name: Upload focused diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: PremiumPlusCombo-CustomHotkey-Cure-Diagnostics
+          path: |
+            custom-hotkey-cure-report.txt
+            tools/premium-plus-combo/control-cure-observed.txt
+          if-no-files-found: error
