@@ -151,7 +151,12 @@ jobs:
           $observer.WaitForExit()
           if($observer.ExitCode-ne0){throw"observer exit $($observer.ExitCode)"}
           $txt=Get-Content game-keys-observed.txt -Raw
-          function N([string]$name){$m=[regex]::Match($txt,"(?m)^$name=(\\d+)$");if(-not$m.Success){throw"missing $name in $txt"};[int64]$m.Groups[1].Value}
+          function N([string]$name){
+            $pattern='(?m)^'+[regex]::Escape($name)+'=(\d+)\s*$'
+            $m=[regex]::Match($txt,$pattern)
+            if(-not $m.Success){ throw "missing $name in observer output: $txt" }
+            return [int64]$m.Groups[1].Value
+          }
           $n8=N '8';$n9=N '9';$n0=N '0';$nr=N 'R';$nf2=N 'F2';$n6=N '6';$nf1=N 'F1';$ov=N 'Overlap'
           if($n8-lt70-or$n9-lt70-or$n0-lt70){throw"combo delivery too low/missing: 8=$n8 9=$n9 0=$n0"}
           $mx=[math]::Max($n8,[math]::Max($n9,$n0));$mn=[math]::Min($n8,[math]::Min($n9,$n0));if(($mx-$mn)-gt2){throw"combo imbalance: 8=$n8 9=$n9 0=$n0"}
