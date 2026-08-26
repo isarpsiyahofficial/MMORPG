@@ -1,0 +1,82 @@
+name: Debug Premium Plus Save
+
+on:
+  push:
+    branches: [ premium-plus-combo ]
+    paths:
+      - '.github/workflows/debug-premium-plus-save.yml'
+  workflow_dispatch:
+
+jobs:
+  debug-save:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Build
+        run: |
+          cd tools\premium-plus-combo
+          rc /nologo /fo app.res app.rc
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
+      - name: Trace save
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $ErrorActionPreference='Stop'
+          Remove-Item 'HKCU:\Software\PremiumPlusCombo' -Recurse -Force -ErrorAction SilentlyContinue
+          Add-Type @"
+          using System; using System.Text; using System.Runtime.InteropServices;
+          public static class Dbg {
+            public delegate bool EP(IntPtr h,IntPtr p);
+            [DllImport("user32.dll")] public static extern bool EnumWindows(EP p,IntPtr l);
+            [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);
+            [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h,int id);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern bool SetWindowText(IntPtr h,string s);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageW")] public static extern IntPtr SendText(IntPtr h,uint m,IntPtr w,StringBuilder l);
+            [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h,StringBuilder b,int n);
+            [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h,StringBuilder b,int n);
+            [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+            public static IntPtr Main(uint pid){IntPtr r=IntPtr.Zero;EnumWindows(delegate(IntPtr h,IntPtr l){uint p;GetWindowThreadProcessId(h,out p);if(p==pid&&GetDlgItem(h,1001)!=IntPtr.Zero&&GetDlgItem(h,1401)!=IntPtr.Zero){r=h;return false;}return true;},IntPtr.Zero);return r;}
+            public static IntPtr Dialog(uint pid){IntPtr r=IntPtr.Zero;EnumWindows(delegate(IntPtr h,IntPtr l){uint p;GetWindowThreadProcessId(h,out p);if(p!=pid)return true;var b=new StringBuilder(32);GetClassName(h,b,b.Capacity);if(b.ToString()=="#32770"){r=h;return false;}return true;},IntPtr.Zero);return r;}
+          }
+          "@
+          function C([IntPtr]$h,[int]$id){[Dbg]::GetDlgItem($h,$id)}
+          function T([IntPtr]$h){$b=New-Object Text.StringBuilder 128;[void][Dbg]::SendText($h,0x000D,[IntPtr]$b.Capacity,$b);$b.ToString()}
+          $p=Start-Process (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
+          $h=[IntPtr]::Zero
+          for($i=0;$i-lt 100;$i++){Start-Sleep -Milliseconds 100;$h=[Dbg]::Main([uint32]$p.Id);if($h-ne[IntPtr]::Zero){break}}
+          if($h-eq[IntPtr]::Zero){throw 'main missing'}
+          [void][Dbg]::SetWindowText((C $h 1001),'1')
+          [void][Dbg]::SetWindowText((C $h 1002),'2')
+          [void][Dbg]::SetWindowText((C $h 1003),'3')
+          "BeforeText=$(T(C $h 1001)),$(T(C $h 1002)),$(T(C $h 1003))"|Set-Content save-debug.txt
+          $lp=((452-band 65535)-shl 16)-bor(400-band 65535)
+          [void][Dbg]::PostMessage($h,0x0202,[IntPtr]::Zero,[IntPtr]$lp)
+          $d=[IntPtr]::Zero
+          for($i=0;$i-lt 50;$i++){Start-Sleep -Milliseconds 100;$d=[Dbg]::Dialog([uint32]$p.Id);if($d-ne[IntPtr]::Zero){break}}
+          if($d-ne[IntPtr]::Zero){$b=New-Object Text.StringBuilder 128;[void][Dbg]::GetWindowText($d,$b,$b.Capacity);"DialogTitle=$($b.ToString())"|Add-Content save-debug.txt;[void][Dbg]::SendMessage($d,0x0111,[IntPtr]1,[IntPtr]::Zero)}else{"DialogTitle=NONE"|Add-Content save-debug.txt}
+          Start-Sleep -Milliseconds 300
+          "AfterText=$(T(C $h 1001)),$(T(C $h 1002)),$(T(C $h 1003))"|Add-Content save-debug.txt
+          if(Test-Path 'HKCU:\Software\PremiumPlusCombo\RogueV2'){
+            $r=Get-ItemProperty 'HKCU:\Software\PremiumPlusCombo\RogueV2'
+            "Seq1=$($r.Seq1) Seq2=$($r.Seq2) Seq3=$($r.Seq3) Start=$($r.StartHotkey) Stop=$($r.StopHotkey)"|Add-Content save-debug.txt
+            reg query HKCU\Software\PremiumPlusCombo\RogueV2 | Out-String | Add-Content save-debug.txt
+          }else{'RegistryKeyMissing=TRUE'|Add-Content save-debug.txt}
+          Get-Content save-debug.txt
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PremiumPlusCombo-Save-Debug
+          path: tools/premium-plus-combo/save-debug.txt
+          if-no-files-found: warn
