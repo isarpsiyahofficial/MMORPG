@@ -1,0 +1,198 @@
+name: Test Premium Plus Controls V2
+
+on:
+  push:
+    branches: [ premium-plus-combo ]
+    paths:
+      - '.github/workflows/test-premium-plus-controls-v2.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: premium-plus-controls-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  controls-regression-v2:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout exact source HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build exact portable EXE
+        run: |
+          cd tools\premium-plus-combo
+          rc /nologo /fo app.res app.rc
+          cl /nologo /utf-8 /std:c++17 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE main.cpp app.res /Fe:PremiumPlusCombo.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib advapi32.lib ole32.lib winmm.lib
+
+      - name: Verify every interactive control and persistence
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $ErrorActionPreference = 'Stop'
+          Remove-Item 'HKCU:\Software\PremiumPlusCombo' -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Force | Out-Null
+          New-ItemProperty 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Name StartHotkey -PropertyType DWord -Value 9 -Force | Out-Null
+          New-ItemProperty 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Name StopHotkey -PropertyType DWord -Value 20 -Force | Out-Null
+          New-ItemProperty 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Name CapsToggleDefaultV3 -PropertyType DWord -Value 1 -Force | Out-Null
+          New-ItemProperty 'HKCU:\Software\PremiumPlusCombo\RogueV2' -Name TabStartCapsStopDefaultV4 -PropertyType DWord -Value 1 -Force | Out-Null
+
+          Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          public static class PpcWin {
+              [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr GetProp(IntPtr h,string n);
+              [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowText(IntPtr h,string t);
+              [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h,StringBuilder b,int n);
+              public delegate bool EnumProc(IntPtr h,IntPtr p);
+              [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p,IntPtr l);
+              [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);
+              [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h,int id);
+              [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
+              [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+              [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+              [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageW")] public static extern IntPtr SendMessageText(IntPtr h,uint m,IntPtr w,StringBuilder l);
+              [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+              [DllImport("user32.dll")] public static extern void keybd_event(byte v,byte s,uint f,UIntPtr x);
+              [DllImport("user32.dll")] public static extern short GetKeyState(int v);
+              [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint f);
+              public static IntPtr FindMain(uint pid){ IntPtr r=IntPtr.Zero; EnumWindows(delegate(IntPtr h,IntPtr l){uint p;GetWindowThreadProcessId(h,out p);if(p==pid&&GetDlgItem(h,1001)!=IntPtr.Zero&&GetDlgItem(h,1302)!=IntPtr.Zero){r=h;return false;}return true;},IntPtr.Zero);return r; }
+              public static IntPtr FindDialog(uint pid){ IntPtr r=IntPtr.Zero; EnumWindows(delegate(IntPtr h,IntPtr l){uint p;GetWindowThreadProcessId(h,out p);if(p!=pid)return true;var b=new StringBuilder(64);GetClassName(h,b,b.Capacity);if(b.ToString()=="#32770"){r=h;return false;}return true;},IntPtr.Zero);return r; }
+          }
+          "@
+
+          function Prop([IntPtr]$h,[string]$n){ [PpcWin]::GetProp($h,$n).ToInt64() }
+          function Ctrl([IntPtr]$h,[int]$id){ [PpcWin]::GetDlgItem($h,$id) }
+          function Txt([IntPtr]$h){ $b=New-Object System.Text.StringBuilder 256;[void][PpcWin]::SendMessageText($h,0x000D,[IntPtr]$b.Capacity,$b);$b.ToString() }
+          function Key([byte]$v){ [PpcWin]::keybd_event($v,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 90;[PpcWin]::keybd_event($v,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 190 }
+          function ParentClick([IntPtr]$h,[int]$x,[int]$y){ $lp=(($y-band 0xffff)-shl 16)-bor($x-band 0xffff);[void][PpcWin]::SendMessage($h,0x0202,[IntPtr]::Zero,[IntPtr]$lp);Start-Sleep -Milliseconds 130 }
+          function ParentPost([IntPtr]$h,[int]$x,[int]$y){ $lp=(($y-band 0xffff)-shl 16)-bor($x-band 0xffff);[void][PpcWin]::PostMessage($h,0x0202,[IntPtr]::Zero,[IntPtr]$lp) }
+          function ButtonClick([IntPtr]$h){ [void][PpcWin]::SendMessage($h,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero);Start-Sleep -Milliseconds 150 }
+          function ChildMouseClick([IntPtr]$h){ [void][PpcWin]::SendMessage($h,0x0201,[IntPtr]1,[IntPtr]0);[void][PpcWin]::SendMessage($h,0x0202,[IntPtr]::Zero,[IntPtr]0);Start-Sleep -Milliseconds 180 }
+          function Checked([IntPtr]$h){ [PpcWin]::SendMessage($h,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()-eq 1 }
+          function ComboSet([IntPtr]$h,[int]$idx){ [void][PpcWin]::SendMessage($h,0x014E,[IntPtr]$idx,[IntPtr]::Zero);Start-Sleep -Milliseconds 80 }
+          function ComboGet([IntPtr]$h){ [PpcWin]::SendMessage($h,0x0147,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() }
+          function Shot([IntPtr]$h,[string]$n){ $b=New-Object System.Drawing.Bitmap 800,500;$g=[System.Drawing.Graphics]::FromImage($b);$dc=$g.GetHdc();$ok=[PpcWin]::PrintWindow($h,$dc,0);$g.ReleaseHdc($dc);$g.Dispose();if(-not $ok){$b.Dispose();throw 'PrintWindow failed'};$b.Save((Join-Path (Get-Location) $n),[System.Drawing.Imaging.ImageFormat]::Png);$b.Dispose() }
+          function LaunchApp {
+              $proc=Start-Process -FilePath (Resolve-Path .\PremiumPlusCombo.exe) -PassThru
+              $hwnd=[IntPtr]::Zero
+              for($i=0;$i-lt 100;$i++){Start-Sleep -Milliseconds 100;$proc.Refresh();if($proc.HasExited){throw "Startup exit $($proc.ExitCode)"};$hwnd=[PpcWin]::FindMain([uint32]$proc.Id);if($hwnd-ne[IntPtr]::Zero){break}}
+              if($hwnd-eq[IntPtr]::Zero){throw 'Main window missing'}
+              Start-Sleep -Milliseconds 500
+              @($proc,$hwnd)
+          }
+          function DismissDialog([uint32]$processId){
+              $dlg=[IntPtr]::Zero
+              for($i=0;$i-lt 50;$i++){Start-Sleep -Milliseconds 100;$dlg=[PpcWin]::FindDialog($processId);if($dlg-ne[IntPtr]::Zero){break}}
+              if($dlg-eq[IntPtr]::Zero){throw 'Expected confirmation dialog missing'}
+              [void][PpcWin]::SendMessage($dlg,0x0111,[IntPtr]1,[IntPtr]::Zero)
+              Start-Sleep -Milliseconds 250
+          }
+
+          $la=LaunchApp;$proc=$la[0];$hwnd=[IntPtr]$la[1]
+          foreach($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302,1401)){if((Ctrl $hwnd $id)-eq[IntPtr]::Zero){throw "Missing control $id"};if(-not[PpcWin]::IsWindowVisible((Ctrl $hwnd $id))){throw "Hidden control $id"}}
+          if((Prop $hwnd 'PPC_ACTIVE')-ne 0){throw 'App auto-started'}
+          if((Txt (Ctrl $hwnd 1301))-ne 'CAPS LOCK' -or (Txt (Ctrl $hwnd 1302))-ne 'CAPS LOCK'){throw 'TAB/CAPS migration not repaired'}
+          $reg=Get-ItemProperty 'HKCU:\Software\PremiumPlusCombo\RogueV2'
+          if($reg.StartHotkey-ne 20 -or $reg.StopHotkey-ne 20 -or $reg.CapsToggleRestoreV5-ne 1){throw 'Caps/Caps repair not persisted'}
+          Shot $hwnd 'ui-locked.png'
+
+          $caps0=[PpcWin]::GetKeyState(0x14)-band 1
+          Key 0x14;if((Prop $hwnd 'PPC_ACTIVE')-ne 1){throw 'CAPS failed to start'}
+          if(([PpcWin]::GetKeyState(0x14)-band 1)-ne$caps0){throw 'CAPS state changed on start'}
+          Key 0x14;if((Prop $hwnd 'PPC_ACTIVE')-ne 0){throw 'CAPS failed to stop'}
+          if(([PpcWin]::GetKeyState(0x14)-band 1)-ne$caps0){throw 'CAPS state changed on stop'}
+
+          ButtonClick (Ctrl $hwnd 1301);Key 0x78;if((Txt (Ctrl $hwnd 1301))-ne 'F9'){throw 'Start assignment failed'}
+          ButtonClick (Ctrl $hwnd 1302);Key 0x79;if((Txt (Ctrl $hwnd 1302))-ne 'F10'){throw 'Stop assignment failed'}
+          ButtonClick (Ctrl $hwnd 1204);Key 0x56;if((Txt (Ctrl $hwnd 1204))-ne 'V'){throw 'Cure assignment failed'}
+
+          [void][PpcWin]::SetWindowText((Ctrl $hwnd 1001),'1');[void][PpcWin]::SetWindowText((Ctrl $hwnd 1002),'2');[void][PpcWin]::SetWindowText((Ctrl $hwnd 1003),'3')
+          if(Checked (Ctrl $hwnd 1101)){ButtonClick (Ctrl $hwnd 1101)}
+          [void][PpcWin]::SetWindowText((Ctrl $hwnd 1102),'33');[void][PpcWin]::SetWindowText((Ctrl $hwnd 1103),'44')
+          if(Checked (Ctrl $hwnd 1201)){ButtonClick (Ctrl $hwnd 1201)}
+          ComboSet (Ctrl $hwnd 1202) 4;ComboSet (Ctrl $hwnd 1203) 6
+
+          ParentPost $hwnd 400 452;DismissDialog ([uint32]$proc.Id)
+          $reg=Get-ItemProperty 'HKCU:\Software\PremiumPlusCombo\RogueV2'
+          if($reg.Seq1-ne 49 -or $reg.Seq2-ne 50 -or $reg.Seq3-ne 51){throw 'Sequence save failed'}
+          if($reg.REnabled-ne 0 -or $reg.RMax-ne 33 -or $reg.RTurbo-ne 44){throw 'R save failed'}
+          if($reg.CureEnabled-ne 0 -or $reg.CureBar-ne 5 -or $reg.CureSlot-ne 7 -or $reg.CureHotkey-ne 86){throw 'Cure save failed'}
+          if($reg.StartHotkey-ne 120 -or $reg.StopHotkey-ne 121){throw 'Hotkey save failed'}
+
+          Stop-Process -Id $proc.Id -Force;Start-Sleep -Milliseconds 400
+          $la=LaunchApp;$proc=$la[0];$hwnd=[IntPtr]$la[1]
+          if((Txt (Ctrl $hwnd 1001))-ne '1' -or (Txt (Ctrl $hwnd 1002))-ne '2' -or (Txt (Ctrl $hwnd 1003))-ne '3'){throw 'Sequence reload failed'}
+          if(Checked (Ctrl $hwnd 1101)){throw 'R checkbox reload failed'}
+          if((Txt (Ctrl $hwnd 1102))-ne '33' -or (Txt (Ctrl $hwnd 1103))-ne '44'){throw 'R rate reload failed'}
+          if(Checked (Ctrl $hwnd 1201)){throw 'Cure checkbox reload failed'}
+          if((ComboGet (Ctrl $hwnd 1202))-ne 4 -or (ComboGet (Ctrl $hwnd 1203))-ne 6){throw 'Cure selectors reload failed'}
+          if((Txt (Ctrl $hwnd 1204))-ne 'V' -or (Txt (Ctrl $hwnd 1301))-ne 'F9' -or (Txt (Ctrl $hwnd 1302))-ne 'F10'){throw 'Hotkey reload failed'}
+
+          Key 0x78;if((Prop $hwnd 'PPC_ACTIVE')-ne 1){throw 'Custom F9 start failed'};Start-Sleep -Milliseconds 500
+          if((Prop $hwnd 'PPC_R_PRESSES')-ne 0){throw 'R fired while disabled'}
+          if((Prop $hwnd 'PPC_COMBO_BURSTS')-le 0){throw 'Combo engine did not run'}
+          Key 0x79;if((Prop $hwnd 'PPC_ACTIVE')-ne 0){throw 'Custom F10 stop failed'}
+
+          ButtonClick (Ctrl $hwnd 1101);ParentClick $hwnd 307 118;Start-Sleep -Milliseconds 550
+          if((Prop $hwnd 'PPC_ACTIVE')-ne 1 -or (Prop $hwnd 'PPC_R_PRESSES')-le 0){throw 'R Combo enable/runtime failed'}
+          ParentClick $hwnd 492 118;if((Prop $hwnd 'PPC_ACTIVE')-ne 0){throw 'Stop button failed'}
+
+          ButtonClick (Ctrl $hwnd 1201);ParentClick $hwnd 307 118;Start-Sleep -Milliseconds 250
+          $c0=Prop $hwnd 'PPC_CURE_RUNS';Key 0x56;Start-Sleep -Milliseconds 500
+          if((Prop $hwnd 'PPC_CURE_RUNS')-le$c0){throw 'Cure runtime failed'}
+          ParentClick $hwnd 492 118
+
+          ParentClick $hwnd 502 209;if((Prop $hwnd 'PPC_MODE')-ne 1){throw 'Turbo card failed'}
+          ParentClick $hwnd 297 209;if((Prop $hwnd 'PPC_MODE')-ne 0){throw 'Maximum card failed'}
+
+          $power=Ctrl $hwnd 1401;ChildMouseClick $power
+          if((Prop $hwnd 'PPC_POWER_ENABLED')-ne 0 -or (Prop $hwnd 'PPC_ACTIVE')-ne 0){throw 'Master OFF failed'}
+          foreach($id in @(1001,1002,1003,1101,1102,1103,1201,1202,1203,1204,1301,1302)){if([PpcWin]::IsWindowEnabled((Ctrl $hwnd $id))){throw "Control $id enabled while master OFF"}}
+          ChildMouseClick $power
+          if((Prop $hwnd 'PPC_POWER_ENABLED')-ne 1 -or (Prop $hwnd 'PPC_ACTIVE')-ne 0){throw 'Master ON failed or auto-started'}
+
+          Shot $hwnd 'ui-controls-verified.png'
+          "SourceSHA=$((git rev-parse HEAD).Trim())" | Set-Content controls-report.txt
+          @(
+            'LockedUiPreserved=PASS','MigrationTABCapsToCapsCaps=PASS','MigrationPersistence=PASS','InitialInactive=PASS','DefaultCapsToggle=PASS','CapsStateIsolation=PASS',
+            'StartHotkeyButton=PASS','StopHotkeyButton=PASS','CureHotkeyButton=PASS','SequenceControls=PASS','RControls=PASS','CureControls=PASS','SaveAndReload=PASS',
+            'CustomF9F10Runtime=PASS','RDisabledRuntime=PASS','RComboRuntime=PASS','CureRuntime=PASS','ModeButtons=PASS','MasterPower=PASS','AllInteractiveControls=PASS'
+          ) | Add-Content controls-report.txt
+          "SHA256=$((Get-FileHash PremiumPlusCombo.exe -Algorithm SHA256).Hash)" | Add-Content controls-report.txt
+          Stop-Process -Id $proc.Id -Force
+
+      - name: Check static portable dependencies
+        shell: pwsh
+        run: |
+          cd tools/premium-plus-combo
+          $deps=(dumpbin /DEPENDENTS PremiumPlusCombo.exe | Out-String)
+          $deps | Set-Content controls-dependencies.txt
+          if($deps -match 'VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt'){throw 'External VC runtime dependency detected'}
+          'StaticCRT=PASS' | Add-Content controls-report.txt
+
+      - name: Upload verified build
+        uses: actions/upload-artifact@v4
+        with:
+          name: PremiumPlusCombo-All-Controls-Verified-V2
+          path: |
+            tools/premium-plus-combo/PremiumPlusCombo.exe
+            tools/premium-plus-combo/controls-report.txt
+            tools/premium-plus-combo/controls-dependencies.txt
+            tools/premium-plus-combo/ui-locked.png
+            tools/premium-plus-combo/ui-controls-verified.png
+          if-no-files-found: error
