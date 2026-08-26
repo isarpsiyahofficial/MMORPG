@@ -39,5 +39,10 @@
 #undef DrawUi
 #undef MakeChildControls
 
+// Keep the locked UI/power implementation intact. The wrapper below only repairs
+// the bad TAB/CAPS migration that was accidentally shipped in an intermediate build.
+#define LoadRegistry PpcPowerLoadRegistry
 #include "app_power.inc"
+#undef LoadRegistry
+#include "app_restore_migration.inc"
 #include "app_part4.inc"
