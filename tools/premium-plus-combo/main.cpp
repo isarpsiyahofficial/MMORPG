@@ -1,38 +1,59 @@
 #include "input_transport.hpp"
 
-// Keep the last known-good application/UI exactly as it was.  The only change
-// here is the transport used when the legacy combo engine submits a multi-key
-// 8 -> 9 -> 0 batch.  The old batch put every down/up record into one SendInput
-// call; some game input paths can observe only the first slot from that burst.
-// Single-key R/Cure output (two records) is deliberately left untouched.
-static void PpcComboPulseWaitMicros(int microseconds) noexcept {
+// Keep the user-verified known-good application/UI intact.  Only synthetic
+// game-facing keyboard delivery is changed here.
+static UINT PpcKnownGoodGameSendInput(UINT count, LPINPUT inputs, int cbSize) noexcept;
+
+#define SendInput PpcKnownGoodGameSendInput
+#include "app_part1.inc"
+
+// app_part1.inc defines g_mode, so the fallback dwell can preserve both requested
+// speed profiles while still exposing a real key-down state to DirectInput-like
+// game polling.  The official game bridge keeps the original batched path.
+static void PpcGamePulseWaitMicros(int microseconds) noexcept {
     if (microseconds <= 0) return;
 
-    LARGE_INTEGER frequency{};
-    LARGE_INTEGER start{};
-    QueryPerformanceFrequency(&frequency);
-    QueryPerformanceCounter(&start);
-
-    const long long delta =
-        (frequency.QuadPart * static_cast<long long>(microseconds)) / 1000000LL;
-    const long long target = start.QuadPart + (delta > 0 ? delta : 1LL);
+    const long long freq = QpcFreq();
+    const long long start = QpcNow();
+    const long long delta = std::max<long long>(
+        1LL, (freq * static_cast<long long>(microseconds)) / 1000000LL);
+    const long long target = start + delta;
 
     for (;;) {
-        LARGE_INTEGER now{};
-        QueryPerformanceCounter(&now);
-        if (now.QuadPart >= target) break;
-        if (target - now.QuadPart > frequency.QuadPart / 3000LL)
+        const long long now = QpcNow();
+        if (now >= target) break;
+        const long long remain = target - now;
+        if (remain > freq / 3000LL)
             SwitchToThread();
         else
             YieldProcessor();
     }
 }
 
-static UINT PpcKnownGoodComboSendInput(UINT count, LPINPUT inputs, int cbSize) noexcept {
-    // Preserve the exact known-good path for R, Cure, hotkeys and every ordinary
-    // two-record key tap.  Only a true multi-key combo batch is split.
-    if (!inputs || count <= 2 || cbSize != sizeof(INPUT))
+static UINT PpcKnownGoodGameSendInput(UINT count, LPINPUT inputs, int cbSize) noexcept {
+    if (!inputs || count == 0 || cbSize != sizeof(INPUT))
         return ppc_input::SendInputScanCodeCompatible(count, inputs, cbSize);
+
+    // When the game-side bridge exists, preserve the original batch and full
+    // producer rate.  The bridge queues each down/up action losslessly.
+    if (ppc_input::BridgeConnected())
+        return ppc_input::SendInputScanCodeCompatible(count, inputs, cbSize);
+
+    // This wrapper is scoped only around the macro engine.  If a future caller
+    // submits non-keyboard input, keep the legacy transport unchanged.
+    for (UINT i = 0; i < count; ++i) {
+        if (inputs[i].type != INPUT_KEYBOARD)
+            return ppc_input::SendInputScanCodeCompatible(count, inputs, cbSize);
+    }
+
+    // Stock-client fallback: do not submit 8/9/0 (or R/Cure) down+up events in
+    // one zero-duration batch.  Emit one scan-code state at a time so the game
+    // cannot repeatedly see only the first key.  Maximum uses a longer state
+    // window while staying above its 120-cycle/s target; Turbo uses a shorter
+    // state window that still fits the 240-cycle/s target.
+    const bool turbo = g_mode.load(std::memory_order_relaxed) == Mode::Turbo;
+    const int downHoldUs = turbo ? 1100 : 2250;
+    const int releasedGapUs = turbo ? 120 : 300;
 
     UINT delivered = 0;
     for (UINT i = 0; i < count; ++i) {
@@ -40,21 +61,11 @@ static UINT PpcKnownGoodComboSendInput(UINT count, LPINPUT inputs, int cbSize) n
         if (sent != 1) return delivered;
         ++delivered;
 
-        if (inputs[i].type == INPUT_KEYBOARD) {
-            const bool keyUp = (inputs[i].ki.dwFlags & KEYEVENTF_KEYUP) != 0;
-            // A short non-zero state window prevents 9/0 from being collapsed
-            // behind the first key while still fitting the legacy 120/240 target
-            // scheduler.  No UI, registry, hotkey or R/Cure timing is changed.
-            PpcComboPulseWaitMicros(keyUp ? 120 : 900);
-        }
+        const bool keyUp = (inputs[i].ki.dwFlags & KEYEVENTF_KEYUP) != 0;
+        PpcGamePulseWaitMicros(keyUp ? releasedGapUs : downHoldUs);
     }
     return delivered;
 }
-
-// Route only the macro engine's synthetic keyboard output through the
-// DirectInput-compatible / official game-bridge transport. UI/hotkey capture stays native.
-#define SendInput PpcKnownGoodComboSendInput
-#include "app_part1.inc"
 
 #define StartMacro PpcLegacyStartMacro
 #define StopMacro PpcLegacyStopMacro
