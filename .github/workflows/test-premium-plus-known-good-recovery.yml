@@ -43,7 +43,7 @@ jobs:
             throw "Known-good application drift detected: $($changed -join ', ')"
           }
           $diff = git diff --unified=0 4d68f5e2cc595c979cbbf657a3fc1e55a073ac3d -- tools/premium-plus-combo/main.cpp | Out-String
-          if ($diff -notmatch 'PpcKnownGoodGameSendInput' -or $diff -notmatch 'g_ppcGameTapLock') {
+          if ($diff -notmatch 'PpcKnownGoodGameSendInput' -or $diff -notmatch 'PpcAcquireGameTapTicket' -or $diff -notmatch 'g_ppcGameTapNextTicket') {
             throw 'Isolated repaired game-input wrapper missing'
           }
           'KnownGoodApplicationSource=PASS' | Set-Content recovery-report.txt
@@ -158,6 +158,7 @@ jobs:
           $observer.WaitForExit()
           if($observer.ExitCode-ne0){ throw "observer exit $($observer.ExitCode)" }
           $txt=Get-Content game-keys-observed.txt -Raw
+          Write-Host "Observed game keys:`n$txt"
           function N([string]$name){
             $pattern='(?m)^'+[regex]::Escape($name)+'=(\d+)\s*$'
             $m=[regex]::Match($txt,$pattern)
